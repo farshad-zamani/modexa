@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>Modexa.Core</RootNamespace>
+    <AssemblyName>Modexa.Core</AssemblyName>
+    <!-- Core needs WMI (System.Management) + DPAPI (built into the Windows TFM). -->
+    <UseWindowsForms>false</UseWindowsForms>
+    <UseWPF>false</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpCompress" Version="0.50.4" />
+    <PackageReference Include="System.Management" Version="8.0.0" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Compiled paid-mod entitlement gate (build\build-asi.ps1). Optional: public builds ship without it. -->
+    <EmbeddedResource Include="Assets\Modexa.asi" LogicalName="Modexa.Core.Assets.Modexa.asi" Condition="Exists('Assets\Modexa.asi')" />
+    <!-- OpenIV mods-folder enabler for GTA V Legacy (third-party; placed directly, no download link). -->
+    <EmbeddedResource Include="Assets\OpenIVFiles.zip" LogicalName="Modexa.Core.Assets.OpenIVFiles.zip" Condition="Exists('Assets\OpenIVFiles.zip')" />
+  </ItemGroup>
+
+</Project>

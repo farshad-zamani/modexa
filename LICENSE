@@ -1,0 +1,28 @@
+Modexa — Proprietary License
+Copyright (c) 2026 CloudTart. All rights reserved.
+Commissioned by RockStarGame.ir.
+
+This source code is published for transparency and user confidence (so anyone can
+see exactly what the Free application does). It is NOT open-source.
+
+You MAY:
+  - View and study this source code.
+  - Build it for your own personal use.
+  - Report issues and suggest changes.
+
+You MAY NOT, without prior written permission from CloudTart:
+  - Redistribute this software or modified versions of it, in source or binary form.
+  - Sell, sublicense, or offer it (or a derivative) as a product or service.
+  - Remove or alter the Modexa / CloudTart branding, or represent your build as official.
+
+The Modexa name, logo, the ".mxa" package format, the Plus/Pro licensing system, and the
+server components are proprietary to CloudTart and are not covered by any permission above.
+
+Third-party components (fonts, modding tools downloaded at runtime, and libraries) remain
+under their own licenses; see docs/CREDITS.md.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.
+Modexa is a third-party tool and is not affiliated with or endorsed by Rockstar Games or
+Take-Two Interactive. All trademarks belong to their respective owners.
+
+Contact: https://cloudtart.com

@@ -1,0 +1,204 @@
+﻿<UserControl x:Class="Modexa.App.Views.GtaVView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Modexa.App.Views"
+             xmlns:i18n="clr-namespace:Modexa.Core.I18n;assembly=Modexa.Core">
+
+    <Grid Background="Transparent">
+        <ScrollViewer Style="{StaticResource PageScroll}">
+            <StackPanel Style="{StaticResource PageContent}">
+
+                <!-- ===== Header: [back] title / subtitle ===== -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Button Style="{StaticResource IconButton}" VerticalAlignment="Center" Margin="0,0,16,0"
+                            Click="Back_Click"
+                            ToolTip="{Binding [Common_Back], Source={x:Static i18n:Loc.Instance}}">
+                        <Path Data="{StaticResource Glyph.Back}" Width="14" Height="14" Stretch="None"
+                              StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                              StrokeLineJoin="Round"
+                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                    </Button>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="TitleText" Style="{StaticResource Display.H1}"
+                                       FontFamily="{DynamicResource Font.En.Display}" Text="Grand Theft Auto V"/>
+                            <Border x:Name="EditionBadge" Style="{StaticResource TierChip}" Margin="12,4,0,0"
+                                    VerticalAlignment="Center">
+                                <TextBlock x:Name="EditionBadgeText" FontFamily="{DynamicResource Font.En.Hud}"
+                                           FontWeight="Bold" FontSize="13" Foreground="{DynamicResource Accent}"/>
+                            </Border>
+                        </StackPanel>
+                        <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,2,0,0"
+                                   Text="{Binding [GtaV_Subtitle], Source={x:Static i18n:Loc.Instance}}"/>
+                    </StackPanel>
+                </Grid>
+
+                <!-- ===== Game folder ===== -->
+                <Border Style="{StaticResource Card}" Margin="0,24,0,0">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource Label.Caps}"
+                                   Text="{Binding [Common_GameFolder], Source={x:Static i18n:Loc.Instance}}"/>
+                        <Grid Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Border Height="40" CornerRadius="10" Padding="14,0"
+                                    Background="{DynamicResource Bg.Inset}"
+                                    BorderBrush="{DynamicResource Stroke.Subtle}" BorderThickness="1">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Style="{StaticResource Icon}" FontSize="15"
+                                               Foreground="{DynamicResource Text.Muted}" Text="&#xE8B7;"/>
+                                    <TextBlock x:Name="FolderText" NumberSubstitution.Substitution="European" Grid.Column="1" Margin="10,0,0,0"
+                                               VerticalAlignment="Center" FontSize="13"
+                                               Foreground="{DynamicResource Text.Secondary}"
+                                               TextTrimming="CharacterEllipsis"/>
+                                </Grid>
+                            </Border>
+                            <Button Grid.Column="1" Style="{StaticResource GhostButton}" Margin="12,0,0,0"
+                                    Click="Browse_Click"
+                                    Content="{Binding [Common_Browse], Source={x:Static i18n:Loc.Instance}}"/>
+                        </Grid>
+
+                        <!-- Edition + build -->
+                        <WrapPanel Margin="0,14,0,0">
+                            <Border Style="{StaticResource Chip}" Margin="0,0,10,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource Label.Caps}" VerticalAlignment="Center"
+                                               Text="{Binding [Common_Edition], Source={x:Static i18n:Loc.Instance}}"/>
+                                    <TextBlock x:Name="EditionText" FlowDirection="LeftToRight" NumberSubstitution.Substitution="European" Style="{StaticResource Hud.Value}"
+                                               FontFamily="{DynamicResource Font.En.Hud}"
+                                               VerticalAlignment="Center" Margin="10,0,0,0" Text="—"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Chip}" Margin="0,0,10,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource Label.Caps}" VerticalAlignment="Center"
+                                               Text="{Binding [Common_Build], Source={x:Static i18n:Loc.Instance}}"/>
+                                    <TextBlock x:Name="VersionText" FlowDirection="LeftToRight" NumberSubstitution.Substitution="European" Style="{StaticResource Hud.Value}"
+                                               FontFamily="{DynamicResource Font.En.Hud}"
+                                               VerticalAlignment="Center" Margin="10,0,0,0" Text="—"/>
+                                </StackPanel>
+                            </Border>
+                            <!-- Editable mods\update\update.rpf (needed for gameconfig + add-ons) -->
+                            <Border x:Name="ModsRpfChip" Style="{StaticResource Chip}" Visibility="Collapsed">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource Label.Caps}" VerticalAlignment="Center"
+                                               Text="{Binding [Prep_ModsRpf], Source={x:Static i18n:Loc.Instance}}"/>
+                                    <TextBlock x:Name="ModsRpfIcon" Style="{StaticResource Icon}" FontSize="12" Margin="10,0,6,0"/>
+                                    <TextBlock x:Name="ModsRpfText" Style="{StaticResource Hud.Value}" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+                        </WrapPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- ===== Prepare ===== -->
+                <TextBlock Style="{StaticResource Display.H2}" Margin="0,32,0,0"
+                           Text="{Binding [GtaV_Prepare_Title], Source={x:Static i18n:Loc.Instance}}"/>
+                <TextBlock Style="{StaticResource Text.Desc}" Margin="0,4,0,14"
+                           Text="{Binding [GtaV_Prepare_Desc], Source={x:Static i18n:Loc.Instance}}"/>
+
+                <local:StepCard x:Name="StepModRunner" Glyph="&#xE945;" Margin="0,0,0,12" Click="ModRunner_Click"
+                                Title="{Binding [GtaV_Step_ModRunner], Source={x:Static i18n:Loc.Instance}}"
+                                Description="{Binding [GtaV_Step_ModRunner_Desc], Source={x:Static i18n:Loc.Instance}}"
+                                ActionText="{Binding [Common_Install], Source={x:Static i18n:Loc.Instance}}"/>
+                <local:StepCard x:Name="StepGameConfig" Glyph="&#xE713;" Margin="0,0,0,12" Click="GameConfig_Click"
+                                Title="{Binding [GtaV_Step_GameConfig], Source={x:Static i18n:Loc.Instance}}"
+                                Description="{Binding [GtaV_Step_GameConfig_Desc], Source={x:Static i18n:Loc.Instance}}"
+                                ActionText="{Binding [Common_Install], Source={x:Static i18n:Loc.Instance}}"/>
+                <local:StepCard x:Name="StepMenu" Glyph="&#xE71D;" Click="Menu_Click"
+                                Title="{Binding [GtaV_Step_Menu], Source={x:Static i18n:Loc.Instance}}"
+                                Description="{Binding [GtaV_Step_Menu_Desc], Source={x:Static i18n:Loc.Instance}}"
+                                ActionText="{Binding [Common_Install], Source={x:Static i18n:Loc.Instance}}"/>
+
+                <!-- ===== Maintenance (Plus/Pro only) ===== -->
+                <TextBlock Style="{StaticResource Display.H2}" Margin="0,32,0,14"
+                           Text="{Binding [Common_Maintenance], Source={x:Static i18n:Loc.Instance}}"/>
+                <Grid>
+                  <Border x:Name="MaintCard" Style="{StaticResource Card}" Padding="0">
+                    <StackPanel>
+                        <Grid Margin="20,18">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Margin="0,0,20,0" VerticalAlignment="Center">
+                                <TextBlock Style="{StaticResource Text.CardTitle}"
+                                           Text="{Binding [GtaV_CleanLaunch], Source={x:Static i18n:Loc.Instance}}"/>
+                                <TextBlock Style="{StaticResource Text.Desc}" Margin="0,4,0,0"
+                                           Text="{Binding [GtaV_CleanLaunch_Desc], Source={x:Static i18n:Loc.Instance}}"/>
+                            </StackPanel>
+                            <ToggleButton x:Name="CleanLaunchToggle" Grid.Column="1" Style="{StaticResource SwitchToggle}"
+                                          VerticalAlignment="Center" Click="CleanLaunch_Click" IsEnabled="False"/>
+                        </Grid>
+                        <Border Style="{StaticResource Divider}"/>
+                        <Grid Margin="20,18">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Margin="0,0,20,0" VerticalAlignment="Center">
+                                <TextBlock Style="{StaticResource Text.CardTitle}"
+                                           Text="{Binding [GtaV_Revert], Source={x:Static i18n:Loc.Instance}}"/>
+                                <TextBlock Style="{StaticResource Text.Desc}" Margin="0,4,0,0"
+                                           Text="{Binding [GtaV_Revert_Desc], Source={x:Static i18n:Loc.Instance}}"/>
+                            </StackPanel>
+                            <Button x:Name="BtnRevert" Grid.Column="1" Style="{StaticResource DangerButton}"
+                                    MinWidth="112" VerticalAlignment="Center" Click="Revert_Click"
+                                    Content="{Binding [Common_Revert], Source={x:Static i18n:Loc.Instance}}"/>
+                        </Grid>
+                    </StackPanel>
+                  </Border>
+
+                  <!-- Free-tier lock: covers the card and links to the shop. -->
+                  <Border x:Name="MaintLock" CornerRadius="14" Background="{DynamicResource Bg.Panel}"
+                          Opacity="0.97" Visibility="Collapsed"
+                          BorderBrush="{DynamicResource Stroke.Strong}" BorderThickness="1">
+                      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24" MaxWidth="460">
+                          <Border Width="40" Height="40" CornerRadius="20" HorizontalAlignment="Center"
+                                  Background="{DynamicResource Accent.Soft}">
+                              <TextBlock Style="{StaticResource Icon}" FontSize="17" Text="&#xE72E;"
+                                         Foreground="{DynamicResource Accent}"/>
+                          </Border>
+                          <TextBlock Style="{StaticResource Text.CardTitle}" Margin="0,12,0,0" HorizontalAlignment="Center"
+                                     TextAlignment="Center"
+                                     Text="{Binding [Pro_Locked_Title], Source={x:Static i18n:Loc.Instance}}"/>
+                          <TextBlock Style="{StaticResource Text.Desc}" Margin="0,6,0,0" HorizontalAlignment="Center"
+                                     TextAlignment="Center"
+                                     Text="{Binding [Pro_Locked_Maintenance], Source={x:Static i18n:Loc.Instance}}"/>
+                          <Button Style="{StaticResource PrimaryButton}" Margin="0,16,0,0" HorizontalAlignment="Center"
+                                  Click="Unlock_Click"
+                                  Content="{Binding [Pro_Locked_Unlock], Source={x:Static i18n:Loc.Instance}}"/>
+                      </StackPanel>
+                  </Border>
+                </Grid>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ===== Progress overlay ===== -->
+        <Grid x:Name="Overlay" Background="{DynamicResource Scrim}" Visibility="Collapsed">
+            <Border Style="{StaticResource Card}" Width="420" Padding="28,26"
+                    HorizontalAlignment="Center" VerticalAlignment="Center">
+                <StackPanel>
+                    <TextBlock x:Name="OverlayPhase" Style="{StaticResource Display.H2}" HorizontalAlignment="Center"/>
+                    <ProgressBar x:Name="OverlayBar" Margin="0,20,0,0" Minimum="0" Maximum="100"/>
+                    <TextBlock x:Name="OverlayPercent" FlowDirection="LeftToRight" NumberSubstitution.Substitution="European" Style="{StaticResource Hud.Value}" Margin="0,10,0,0"
+                               FontFamily="{DynamicResource Font.En.Hud}"
+                               Foreground="{DynamicResource Text.Secondary}" HorizontalAlignment="Center"/>
+                    <Button x:Name="OverlayCancel" Style="{StaticResource GhostButton}" Margin="0,20,0,0"
+                            HorizontalAlignment="Center" MinWidth="112" Click="Cancel_Click"
+                            Content="{Binding [Common_Cancel], Source={x:Static i18n:Loc.Instance}}"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

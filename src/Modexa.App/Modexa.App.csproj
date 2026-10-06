@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>Modexa.App</RootNamespace>
+    <AssemblyName>Modexa</AssemblyName>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- ApplicationIcon set once assets\modexa.ico exists (generated in the design pass). -->
+
+    <!-- Hardened single-file release knobs (mirrors the Backup Manager). -->
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Modexa.Core\Modexa.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- We use WinForms only via the explicit "WinForms" alias (FolderBrowserDialog), so drop its
+         global usings to avoid Application/UserControl clashes with WPF. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- App icon is optional at dev time; guard so the build doesn't fail before art exists. -->
+    <Content Include="assets\modexa.ico" Condition="Exists('assets\modexa.ico')" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Bundled OFL fonts, embedded as WPF resources for pack:// access. -->
+    <Resource Include="assets\fonts\*.ttf" />
+  </ItemGroup>
+
+</Project>

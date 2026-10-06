@@ -1,0 +1,186 @@
+<Window x:Class="Modexa.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:i18n="clr-namespace:Modexa.Core.I18n;assembly=Modexa.Core"
+        xmlns:local="clr-namespace:Modexa.App.Views"
+        Title="Modexa" Height="760" Width="1180" MinHeight="600" MinWidth="960"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource Bg.Base}"
+        Foreground="{DynamicResource Text.Primary}"
+        FontFamily="{DynamicResource Font.Body}" FontSize="13"
+        UseLayoutRounding="True"
+        AllowDrop="True" DragOver="Window_DragOver" Drop="Window_Drop">
+
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="44" CornerRadius="0" GlassFrameThickness="0"
+                      ResizeBorderThickness="6" UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
+
+    <!-- OuterFrame.Margin is set in code while maximized so nothing is pushed off-screen. -->
+    <Border x:Name="OuterFrame" Background="{DynamicResource Bg.Base}"
+            BorderBrush="{DynamicResource Stroke.Subtle}" BorderThickness="1">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="44"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- ===================== TITLE BAR (always LTR: window controls stay top-right) ===================== -->
+            <Grid Grid.Row="0" FlowDirection="LeftToRight" Background="{DynamicResource Bg.Base}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>  <!-- brand -->
+                    <ColumnDefinition Width="Auto"/>  <!-- nav -->
+                    <ColumnDefinition Width="*"/>     <!-- drag area -->
+                    <ColumnDefinition Width="Auto"/>  <!-- update + language -->
+                    <ColumnDefinition Width="Auto"/>  <!-- caption buttons -->
+                </Grid.ColumnDefinitions>
+
+                <!-- Brand -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                    <Border Width="26" Height="26" CornerRadius="7" Background="{DynamicResource Accent.Gradient}">
+                        <TextBlock Text="M" FontFamily="{DynamicResource Font.En.Display}" FontWeight="Bold"
+                                   FontSize="15" Foreground="{DynamicResource Text.OnAccent}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <TextBlock Text="MODEXA" FontFamily="{DynamicResource Font.En.Display}" FontWeight="Bold"
+                               FontSize="15" Margin="10,0,0,0" VerticalAlignment="Center"
+                               Foreground="{DynamicResource Text.Primary}"/>
+                    <Button x:Name="TierBadge" Style="{StaticResource TierChipButton}" Margin="12,0,0,0"
+                            Click="TierBadge_Click"
+                            ToolTip="{Binding [License_ActivatePro], Source={x:Static i18n:Loc.Instance}}">
+                        <Grid>
+                            <TextBlock x:Name="TierText" Text="FREE"/>
+                            <!-- Pro shimmer: a bright band sweeping across the label -->
+                            <TextBlock x:Name="TierShine" Text="{Binding Text, ElementName=TierText}"
+                                       Opacity="0" IsHitTestVisible="False">
+                                <TextBlock.Foreground>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                        <LinearGradientBrush.RelativeTransform>
+                                            <TranslateTransform x:Name="TierShineTx" X="-1"/>
+                                        </LinearGradientBrush.RelativeTransform>
+                                        <GradientStop Color="Transparent" Offset="0.3"/>
+                                        <GradientStop Color="#FFFFFFFF" Offset="0.5"/>
+                                        <GradientStop Color="Transparent" Offset="0.7"/>
+                                    </LinearGradientBrush>
+                                </TextBlock.Foreground>
+                            </TextBlock>
+                        </Grid>
+                    </Button>
+                    <!-- Upgrade shortcut: opens the Pro license window. Hidden once Pro is active. -->
+                    <Button x:Name="GoProBtn" Style="{StaticResource GoProButton}" Margin="8,0,0,0"
+                            Click="GoPro_Click"
+                            ToolTip="{Binding [Pro_Activate_Title], Source={x:Static i18n:Loc.Instance}}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Icon}" FontSize="11" Text="&#xE734;" Foreground="#FF231703"/>
+                            <TextBlock Margin="6,0,0,0" VerticalAlignment="Center"
+                                       Text="{Binding [Pro_GoPro], Source={x:Static i18n:Loc.Instance}}"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <!-- Primary navigation -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="20,0,0,0">
+                    <Border Width="1" Height="18" Background="{DynamicResource Stroke.Strong}" Margin="0,0,12,0"/>
+                    <Button x:Name="BtnHome" Style="{StaticResource TitleButton}" Click="Home_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Icon}" FontSize="14" Text="&#xE80F;"/>
+                            <TextBlock Margin="8,0,0,0" VerticalAlignment="Center"
+                                       Text="{Binding [Nav_Games], Source={x:Static i18n:Loc.Instance}}"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="BtnMyMods" Style="{StaticResource TitleButton}" Margin="4,0,0,0" Click="MyMods_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Icon}" FontSize="14" Text="&#xE7B8;"/>
+                            <TextBlock Margin="8,0,0,0" VerticalAlignment="Center"
+                                       Text="{Binding [Mods_Nav], Source={x:Static i18n:Loc.Instance}}"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <!-- Update + language -->
+                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0">
+                    <Button x:Name="UpdateChip" Style="{StaticResource TitleButton}" Margin="0,0,4,0"
+                            Visibility="Collapsed" Click="UpdateChip_Click"
+                            Foreground="{DynamicResource Accent}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Icon}" FontSize="14" Text="&#xE896;"/>
+                            <TextBlock x:Name="UpdateChipText" Margin="8,0,0,0" VerticalAlignment="Center"
+                                       Text="{Binding [Update_Available], Source={x:Static i18n:Loc.Instance}}"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="LangToggle" Style="{StaticResource TitleButton}" Click="LangToggle_Click"
+                            ToolTip="{Binding [Lang_Switch], Source={x:Static i18n:Loc.Instance}}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Icon}" FontSize="14" Text="&#xE774;"/>
+                            <!-- Shows the language you can switch TO, in its own script/font. -->
+                            <TextBlock x:Name="LangLabel" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <!-- Window controls -->
+                <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Top">
+                    <Button x:Name="BtnMin" Style="{StaticResource CaptionButton}" Tag="{StaticResource Glyph.Min}"
+                            Click="Min_Click"
+                            ToolTip="{Binding [Win_Minimize], Source={x:Static i18n:Loc.Instance}}"/>
+                    <Button x:Name="BtnMax" Style="{StaticResource CaptionButton}" Tag="{StaticResource Glyph.Max}"
+                            Click="Max_Click"/>
+                    <Button x:Name="BtnClose" Style="{StaticResource CaptionCloseButton}" Tag="{StaticResource Glyph.Close}"
+                            Click="Close_Click"
+                            ToolTip="{Binding [Common_Close], Source={x:Static i18n:Loc.Instance}}"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- Hairline under the title bar -->
+            <Border Grid.Row="0" VerticalAlignment="Bottom" Height="1" Background="{DynamicResource Stroke.Subtle}"/>
+
+            <!-- ===================== CONTENT HOST ===================== -->
+            <Grid Grid.Row="1" x:Name="ContentRoot" ClipToBounds="True">
+                <!-- Animated tier backdrop (Plus veins / Pro aurora + pulses + embers) -->
+                <local:TierAmbience x:Name="Ambience"/>
+                <ContentControl x:Name="PART_Content" Focusable="False"/>
+            </Grid>
+
+            <!-- Builder signature footer -->
+            <Border Grid.Row="2" Height="28" Background="{DynamicResource Bg.Base}"
+                    BorderBrush="{DynamicResource Stroke.Subtle}" BorderThickness="0,1,0,0">
+                <local:SignatureBar/>
+            </Border>
+
+            <!-- Tier ambient edge: hidden on Free, gold hairline + soft top wash on Plus/Pro, plus a
+                 light sweep travelling around the frame on Pro. Pure brushes (no blur effects). -->
+            <Grid x:Name="GlowOverlay" Grid.Row="0" Grid.RowSpan="3" IsHitTestVisible="False"
+                  Opacity="0" Visibility="Collapsed" Panel.ZIndex="20">
+                <Border BorderThickness="1" BorderBrush="{DynamicResource Gold}"/>
+                <Border x:Name="FrameSweep" BorderThickness="1.5" Opacity="0">
+                    <Border.BorderBrush>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <LinearGradientBrush.RelativeTransform>
+                                <TranslateTransform x:Name="FrameSweepTx" X="-1" Y="-1"/>
+                            </LinearGradientBrush.RelativeTransform>
+                            <GradientStop Color="Transparent" Offset="0.38"/>
+                            <GradientStop Color="#FFFFF1C4" Offset="0.5"/>
+                            <GradientStop Color="Transparent" Offset="0.62"/>
+                        </LinearGradientBrush>
+                    </Border.BorderBrush>
+                </Border>
+                <Border Height="140" VerticalAlignment="Top" Margin="1,45,1,0">
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Color="{DynamicResource C.Glow}" Offset="0"/>
+                            <GradientStop Color="Transparent" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Border.Background>
+                    <Border.OpacityMask>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                            <GradientStop Color="#00000000" Offset="0"/>
+                            <GradientStop Color="#18000000" Offset="0.5"/>
+                            <GradientStop Color="#00000000" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Border.OpacityMask>
+                </Border>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

@@ -1,0 +1,28 @@
+# Build output
+bin/
+obj/
+dist/
+*.user
+
+# Reference-only clones (study material, never shipped)
+external/
+
+# Internal / secret assets that must never be committed to the public repo
+secrets/
+secret/
+*.mxa
+build/_staging/
+
+# IDE
+.vs/
+.idea/
+*.suo
+
+# Local dev artifacts
+*.log
+cache/
+
+# Compiled from secret/ sources by build/build-asi.ps1
+src/Modexa.Core/Assets/Modexa.asi
+secret/Modexa.Runtime.Asi/build/
+src/Modexa.Core/Assets/OpenIVFiles.zip

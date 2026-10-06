@@ -1,0 +1,10 @@
+<UserControl x:Class="Modexa.App.Views.SignatureBar"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             FlowDirection="LeftToRight">
+    <!-- Subtle maker's mark shown at the bottom of every window. -->
+    <TextBlock Style="{StaticResource Signature}" TextOptions.TextFormattingMode="Ideal">
+        <Run Text="MODEXA" Foreground="{DynamicResource Text.Secondary}" FontWeight="Bold"/><Run Text="  —  crafted by "/><Hyperlink NavigateUri="https://cloudtart.com" RequestNavigate="Link_Navigate"
+                   Foreground="{DynamicResource Accent}" TextDecorations="None"><Run Text="cloudtart.com"/></Hyperlink>
+    </TextBlock>
+</UserControl>

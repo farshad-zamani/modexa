@@ -1,0 +1,56 @@
+﻿<UserControl x:Class="Modexa.App.Views.TierAmbience"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             IsHitTestVisible="False" Focusable="False" ClipToBounds="True">
+    <!-- Decorative background behind every page. Free: nothing. Plus: breathing gold veins.
+         Pro: drifting aurora + light pulses running along the veins + rising embers.
+         Pure brushes/transforms (no blur effects) and a 30 fps cap keep it cheap. -->
+    <Grid x:Name="Root" Visibility="Collapsed">
+
+        <!-- Aurora (Pro) -->
+        <Canvas x:Name="AuroraLayer" Opacity="0">
+            <Ellipse x:Name="AuroraA" Width="1100" Height="560" Canvas.Left="-200" Canvas.Top="-300">
+                <Ellipse.Fill>
+                    <RadialGradientBrush>
+                        <GradientStop Color="{DynamicResource C.Glow}" Offset="0"/>
+                        <GradientStop Color="Transparent" Offset="1"/>
+                    </RadialGradientBrush>
+                </Ellipse.Fill>
+                <Ellipse.RenderTransform>
+                    <TranslateTransform x:Name="AuroraATx"/>
+                </Ellipse.RenderTransform>
+            </Ellipse>
+            <Ellipse x:Name="AuroraB" Width="900" Height="480" Canvas.Top="-260">
+                <Ellipse.Fill>
+                    <RadialGradientBrush>
+                        <GradientStop Color="#FFB8862A" Offset="0"/>
+                        <GradientStop Color="Transparent" Offset="1"/>
+                    </RadialGradientBrush>
+                </Ellipse.Fill>
+                <Ellipse.RenderTransform>
+                    <TranslateTransform x:Name="AuroraBTx"/>
+                </Ellipse.RenderTransform>
+            </Ellipse>
+        </Canvas>
+
+        <!-- Gold veins (Plus + Pro). Geometry is defined in a 1000x600 space and scaled in code with
+             a geometry transform, so strokes stay hairline-thin at any window size. -->
+        <Canvas x:Name="VeinLayer" Opacity="0.10">
+            <Path x:Name="Vein1" StrokeThickness="1.2"/>
+            <Path x:Name="Vein2" StrokeThickness="1"/>
+            <Path x:Name="Vein3" StrokeThickness="0.9"/>
+            <Path x:Name="Vein4" StrokeThickness="0.8"/>
+            <Path x:Name="Vein5" StrokeThickness="0.7"/>
+            <Path x:Name="Vein6" StrokeThickness="0.7"/>
+        </Canvas>
+        <!-- Pulses: one short bright dash travelling along each main vein (Pro). -->
+        <Canvas x:Name="PulseLayer" Opacity="0">
+            <Path x:Name="Pulse1" StrokeThickness="2.2" StrokeDashCap="Round"/>
+            <Path x:Name="Pulse2" StrokeThickness="1.8" StrokeDashCap="Round"/>
+            <Path x:Name="Pulse3" StrokeThickness="1.6" StrokeDashCap="Round"/>
+        </Canvas>
+
+        <!-- Embers (Pro) -->
+        <Canvas x:Name="EmberLayer" Opacity="0"/>
+    </Grid>
+</UserControl>

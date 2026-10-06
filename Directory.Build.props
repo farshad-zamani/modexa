@@ -1,0 +1,22 @@
+<!-- Shared MSBuild properties for every Modexa project. -->
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+    <Company>CloudTart</Company>
+    <Product>Modexa</Product>
+    <Authors>CloudTart</Authors>
+    <Copyright>© CloudTart — commissioned by RockStarGame.ir. All rights reserved.</Copyright>
+    <!-- Single source of truth for the shipped version; update here for releases. -->
+    <Version>1.0.0.0</Version>
+    <FileVersion>1.0.0.0</FileVersion>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+  </PropertyGroup>
+  <!-- Release builds ship no symbol files (nothing that helps decompilers line code up). -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+</Project>

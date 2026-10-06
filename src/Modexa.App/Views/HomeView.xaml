@@ -1,0 +1,33 @@
+﻿<UserControl x:Class="Modexa.App.Views.HomeView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:i18n="clr-namespace:Modexa.Core.I18n;assembly=Modexa.Core">
+
+    <Grid Background="Transparent">
+        <!-- soft radial atmosphere behind the grid -->
+        <Border IsHitTestVisible="False" Opacity="0.07">
+            <Border.Background>
+                <RadialGradientBrush GradientOrigin="0.5,0.0" Center="0.5,0.0" RadiusX="0.8" RadiusY="0.7">
+                    <GradientStop Color="{DynamicResource C.Accent}" Offset="0"/>
+                    <GradientStop Color="#00000000" Offset="1"/>
+                </RadialGradientBrush>
+            </Border.Background>
+        </Border>
+
+        <ScrollViewer Style="{StaticResource PageScroll}">
+            <StackPanel x:Name="Page" Style="{StaticResource PageContent}" MaxWidth="1160">
+                <TextBlock Style="{StaticResource Display.H1}"
+                           Text="{Binding [Home_Title], Source={x:Static i18n:Loc.Instance}}"/>
+                <TextBlock Style="{StaticResource Text.Subtitle}" Margin="0,6,0,0"
+                           Text="{Binding [Home_Subtitle], Source={x:Static i18n:Loc.Instance}}"/>
+
+                <!-- Cards carry an 8px margin; the panels' -8 margin keeps the outer edges flush. -->
+                <UniformGrid x:Name="ReadyGrid" Margin="-8,24,-8,0" Rows="0"/>
+
+                <TextBlock x:Name="SoonHeader" Style="{StaticResource Label.Caps}" Margin="0,28,0,12"
+                           Text="{Binding [Home_Section_Soon], Source={x:Static i18n:Loc.Instance}}"/>
+                <UniformGrid x:Name="SoonGrid" Margin="-8,0" Rows="0"/>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</UserControl>
