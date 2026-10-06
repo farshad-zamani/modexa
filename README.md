@@ -66,5 +66,5 @@ See [docs/CREDITS.md](docs/CREDITS.md). Built on the work of **OpenIV / OpenRPF*
 Modexa is a third-party tool and is **not affiliated with or endorsed by Rockstar Games or
 Take-Two Interactive**. All trademarks belong to their respective owners.
 
-Developed by [CloudTart](https://www.CloudTart.com), commissioned by
-[RockStarGame.ir](https://www.rockstargame.ir).
+Developed by [CloudTart](https://CloudTart.com), commissioned by
+[WTMod.com](https://wtmod.com).
