@@ -37,7 +37,7 @@ public sealed class PrepareVersionException : Exception
     public IReadOnlyList<string> Available { get; }
 }
 
-public enum PreparePhase { Downloading, Verifying, Extracting, Installing, Done }
+public enum PreparePhase { Downloading, Verifying, PreparingArchive, Extracting, Installing, Done }
 
 public readonly record struct PrepareProgress(PreparePhase Phase, int? Percent);
 
@@ -58,7 +58,9 @@ public sealed record PrepareResult(
     string? GameConfigVariant,
     int? ConfigBuild,
     bool BuildMismatch,
-    string? VersionWarning = null);
+    string? VersionWarning = null,
+    bool ModsRpfCreated = false,
+    ModsArchiveException? ModsRpfError = null);
 
 /// <summary>
 /// Runs a "prepare for mods" step end-to-end: resolve the edition-specific bundle, download it once
@@ -121,7 +123,28 @@ public sealed class PrepareService
             if (variant == null) outcome = GameConfigOutcome.Skipped;
         }
 
-        // 3) Extract + install on a worker thread.
+        // 3) gameconfig.xml lives in mods\update\update.rpf: create that editable copy first if
+        //    needed (copy of the game's update.rpf converted to OPEN — what OpenIV used to do).
+        bool modsRpfCreated = false;
+        ModsArchiveException? modsRpfError = null;
+        if (variant != null && bundle.GameConfig != null && !await Task.Run(() => ModsArchives.IsReady(gameFolder), ct))
+        {
+            progress?.Report(new PrepareProgress(PreparePhase.PreparingArchive, 0));
+            bool had = File.Exists(ModsArchives.ModsPath(gameFolder, ModsArchives.UpdateRpf));
+            var copyProgress = new Progress<int>(p => progress?.Report(new PrepareProgress(PreparePhase.PreparingArchive, p)));
+            try
+            {
+                await Task.Run(() => ModsArchives.EnsureOpen(gameFolder, ModsArchives.UpdateRpf, copyProgress, ct), ct);
+                modsRpfCreated = !had;
+            }
+            catch (ModsArchiveException ex)
+            {
+                Diagnostics.Log.Error("Create mods update.rpf", ex);
+                modsRpfError = ex; // the rest of the step still installs; the result explains what is missing
+            }
+        }
+
+        // 4) Extract + install on a worker thread.
         progress?.Report(new PrepareProgress(PreparePhase.Extracting, 0));
         string stagedConfig = Path.Combine(AppPaths.CacheDir, "staging", Guid.NewGuid().ToString("N") + ".xml");
         string? configSource = variant != null && bundle.GameConfig != null
@@ -172,7 +195,7 @@ public sealed class PrepareService
         // A gameconfig that couldn't be placed yet isn't "installed": keep the step open for a re-run.
         if (outcome is GameConfigOutcome.NotApplicable or GameConfigOutcome.Applied)
             PrepareState.MarkDone(gameFolder, step, variant);
-        return new PrepareResult(installed.count, outcome, variant, forBuild, mismatch, versionWarning);
+        return new PrepareResult(installed.count, outcome, variant, forBuild, mismatch, versionWarning, modsRpfCreated, modsRpfError);
     }
 
     // ---- version-folder resolution ---------------------------------------------------------------
@@ -228,7 +251,7 @@ public sealed class PrepareService
     private static string NormVersion(string s)
         => new string(s.ToLowerInvariant().Where(c => char.IsLetterOrDigit(c) || c == '.').ToArray());
 
-    /// <summary>Writes gameconfig.xml into an OPEN mods\update\update.rpf (exactly undoable).</summary>
+    /// <summary>Writes gameconfig.xml into an OPEN mods\update\update.rpf (the original is backed up).</summary>
     public static GameConfigOutcome ApplyGameConfig(string gameFolder, byte[] xml, BackupSession backup)
     {
         string rpfPath = Path.Combine(gameFolder, ModsUpdateRpf.Replace('/', Path.DirectorySeparatorChar));
@@ -237,12 +260,12 @@ public sealed class PrepareService
         uint? enc = RpfArchive.PeekEncryption(rpfPath);
         if (enc is not (Rpf7.EncryptionOpen or Rpf7.EncryptionNone)) return GameConfigOutcome.UpdateRpfEncrypted;
 
-        var rpf = RpfArchive.Open(rpfPath);
-        var entry = rpf.FindBinary(GameConfigEntry);
-        if (entry == null) return GameConfigOutcome.NoGameConfigEntry;
+        var ed = RpfEditor.Open(rpfPath);
+        if (!ed.FileExists(GameConfigEntry)) return GameConfigOutcome.NoGameConfigEntry;
 
-        backup.TrackArchiveEntry(ModsUpdateRpf, entry.Index, rpf.ReadTocEntry(entry.Index));
-        rpf.ReplaceFileUncompressed(entry, xml);
+        backup.TrackArchiveFile(ModsUpdateRpf, GameConfigEntry, ed.ReadFile(GameConfigEntry));
+        ed.SetFile(GameConfigEntry, xml);
+        ed.Commit();
         return GameConfigOutcome.Applied;
     }
 

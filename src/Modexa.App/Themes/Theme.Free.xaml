@@ -17,6 +17,8 @@
 
     <SolidColorBrush x:Key="Bg.Base" Color="{DynamicResource C.Bg.Base}"/>
     <SolidColorBrush x:Key="Bg.Panel" Color="{DynamicResource C.Bg.Panel}"/>
+    <!-- Opaque panel colour for top-level dialog windows (Bg.Panel may be translucent). -->
+    <SolidColorBrush x:Key="Bg.Dialog" Color="{DynamicResource C.Bg.Panel}"/>
     <SolidColorBrush x:Key="Bg.Elevated" Color="{DynamicResource C.Bg.Elevated}"/>
     <SolidColorBrush x:Key="Bg.Inset" Color="{DynamicResource C.Bg.Inset}"/>
 

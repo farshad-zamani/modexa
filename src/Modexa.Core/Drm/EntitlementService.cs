@@ -48,6 +48,24 @@ public static class EntitlementService
     }
 
     /// <summary>
+    /// Takes an uninstalled mod's files off the protected list (unless another installed licensed
+    /// mod still owns the same path), so a later free mod at that path is never deactivated.
+    /// </summary>
+    public static void UnregisterInstall(string gameFolder, ModInstallRecord record, IEnumerable<ModInstallRecord> installed)
+    {
+        if (record.Files.Count == 0 || !File.Exists(ProtectedPath(gameFolder))) return;
+        var stillOwned = installed
+            .Where(r => r.Id != record.Id && r.ProductId != null && InstalledModsStore.SameFolder(r.GameFolder, gameFolder))
+            .SelectMany(r => r.Files.Select(f => f.Dest.Replace('\\', '/')))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var mine = record.Files.Select(f => f.Dest.Replace('\\', '/')).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var list = LoadProtected(gameFolder);
+        int before = list.Count;
+        list.RemoveAll(p => mine.Contains(p.Replace('\\', '/')) && !stillOwned.Contains(p.Replace('\\', '/')));
+        if (list.Count != before) SaveProtected(gameFolder, list);
+    }
+
+    /// <summary>
     /// Removes the entitlement so the ASI deactivates protected content on next launch. Called when
     /// the license is found invalid (e.g. during the periodic re-check).
     /// </summary>

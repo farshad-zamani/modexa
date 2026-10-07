@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.IO.Compression;
 using System.Text;
 
@@ -41,8 +41,8 @@ public sealed class RpfResourceEntry : RpfEntry
 /// <summary>
 /// Reads an RPF7 archive and edits <b>OPEN</b> archives in place without a full rebuild (efficient on
 /// multi-GB files): a replaced file is appended at a 512-aligned EOF and its single TOC entry patched.
-/// NG/AES reading/writing is intentionally out of scope — Modexa's Prepare step installs an OPEN
-/// update.rpf, so add-on registration only ever edits OPEN archives.
+/// Encrypted (NG/AES) game archives are first copied to the mods folder and converted to OPEN by
+/// <see cref="ModsArchives"/>; structural edits (add/delete files) go through <see cref="RpfEditor"/>.
 /// </summary>
 public sealed class RpfArchive
 {
@@ -76,29 +76,6 @@ public sealed class RpfArchive
         {
             return null;
         }
-    }
-
-    /// <summary>The raw 16-byte TOC record of an entry (used to undo an in-place replace exactly).</summary>
-    public byte[] ReadTocEntry(int index)
-    {
-        using var fs = File.OpenRead(_path);
-        fs.Seek(16 + (long)index * Rpf7.EntrySize, SeekOrigin.Begin);
-        var buf = new byte[Rpf7.EntrySize];
-        ReadExact(fs, buf);
-        return buf;
-    }
-
-    /// <summary>
-    /// Restores a TOC record captured by <see cref="ReadTocEntry"/>. A replace only appends new data
-    /// and repoints the record, so the original bytes are still in the archive — this is a full undo.
-    /// </summary>
-    public static void WriteTocEntry(string archivePath, int index, byte[] record)
-    {
-        if (record.Length != Rpf7.EntrySize) throw new ArgumentException("Invalid TOC record.", nameof(record));
-        using var fs = new FileStream(archivePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-        fs.Seek(16 + (long)index * Rpf7.EntrySize, SeekOrigin.Begin);
-        fs.Write(record, 0, record.Length);
-        fs.Flush();
     }
 
     private void Read()
@@ -166,7 +143,8 @@ public sealed class RpfArchive
             {
                 NameOffset = (uint)(y & 0xFFFF),
                 FileSize = (uint)((BitConverter.ToUInt64(toc, o) >> 16) & 0xFFFFFF),
-                FileOffset = (long)((BitConverter.ToUInt64(toc, o) >> 40) & 0xFFFFFF),
+                // Bit 23 of the offset field is the "resource" flag, not part of the offset.
+                FileOffset = (long)((BitConverter.ToUInt64(toc, o) >> 40) & 0x7FFFFF),
                 SystemFlags = BitConverter.ToUInt32(toc, o + 8),
                 GraphicsFlags = BitConverter.ToUInt32(toc, o + 12),
             };
@@ -204,13 +182,20 @@ public sealed class RpfArchive
             .FirstOrDefault(e => string.Equals(e.Path, path, StringComparison.OrdinalIgnoreCase));
     }
 
-    /// <summary>Extracts a binary file's bytes (decompressing if needed).</summary>
+    /// <summary>
+    /// Extracts a binary file's bytes (decrypting + decompressing if needed). Game archives converted
+    /// to OPEN keep their per-file NG encryption (e.g. dlclist.xml, gameconfig.xml); those entries are
+    /// decrypted with the keys of the game the archive belongs to.
+    /// </summary>
     public byte[] Extract(RpfBinaryEntry entry)
     {
         using var fs = File.OpenRead(_path);
         fs.Seek(entry.DataStart, SeekOrigin.Begin);
         byte[] stored = new byte[entry.StoredLength];
         ReadExact(fs, stored);
+
+        if (entry.EncryptionType != 0)
+            GtaKeys.LoadForPath(_path).DecryptNg(stored, entry.Name, entry.UncompressedSize);
 
         if (!entry.IsCompressed) return stored;
 
@@ -269,6 +254,81 @@ public sealed class RpfArchive
 
     public void ReplaceText(RpfBinaryEntry entry, string text)
         => ReplaceFileUncompressed(entry, Encoding.UTF8.GetBytes(text));
+
+    /// <summary>
+    /// Rewrites an NG/AES archive's TOC as OPEN in place — the same conversion OpenIV performs when an
+    /// archive is copied to the mods folder. File data is untouched (NG-encrypted files stay encrypted
+    /// and flagged, which the game reads fine); for AES archives the flagged files are decrypted too,
+    /// since an OPEN header no longer says which cipher they used.
+    /// </summary>
+    /// <param name="keyName">Name the NG key is derived from (the archive's original file/entry name).</param>
+    /// <param name="keyLength">Length the NG key is derived from (default: the file's current length).</param>
+    /// <returns>False when the archive already was OPEN.</returns>
+    public static bool ConvertToOpen(string path, string keyName, GtaKeys keys, long? keyLength = null)
+    {
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        using var r = new BinaryReader(fs, Encoding.ASCII, leaveOpen: true);
+        if (fs.Length < 16 || r.ReadUInt32() != Rpf7.Version) throw new InvalidDataException("Not an RPF7 archive.");
+        uint count = r.ReadUInt32(), namesLen = r.ReadUInt32(), enc = r.ReadUInt32();
+        if (enc is Rpf7.EncryptionOpen or Rpf7.EncryptionNone) return false;
+
+        byte[] toc = r.ReadBytes(checked((int)count * Rpf7.EntrySize));
+        byte[] names = r.ReadBytes(checked((int)namesLen));
+        if (toc.Length != count * Rpf7.EntrySize || names.Length != namesLen) throw new InvalidDataException("Truncated RPF header.");
+
+        bool aes = enc == Rpf7.EncryptionAes;
+        if (aes)
+        {
+            toc = keys.DecryptAes(toc);
+            names = keys.DecryptAes(names);
+        }
+        else
+        {
+            // Rpf7.EncryptionNg — and, like the game, any unknown tag is treated as NG.
+            var key = keys.NgKeyFor(keyName, (uint)(keyLength ?? fs.Length));
+            keys.DecryptNg(toc, key);
+            keys.DecryptNg(names, key);
+        }
+
+        // Plausibility check before anything is written: a wrong key yields garbage.
+        if (count == 0 || BitConverter.ToUInt32(toc, 4) != Rpf7.DirectoryIdentifier || namesLen == 0 || names[0] != 0)
+            throw new InvalidDataException("The archive could not be decrypted with this game's keys.");
+        for (int i = 0; i < count; i++)
+        {
+            uint w0 = BitConverter.ToUInt32(toc, i * 16), w1 = BitConverter.ToUInt32(toc, i * 16 + 4);
+            uint nameOffset = w1 == Rpf7.DirectoryIdentifier ? w0 : w0 & 0xFFFF;
+            if (nameOffset >= namesLen) throw new InvalidDataException("The archive could not be decrypted with this game's keys.");
+        }
+
+        if (aes)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                int o = i * 16;
+                uint w1 = BitConverter.ToUInt32(toc, o + 4);
+                if (w1 == Rpf7.DirectoryIdentifier || (w1 & 0x80000000) != 0) continue;
+                if (BitConverter.ToUInt32(toc, o + 12) == 0) continue;
+                ulong packed = BitConverter.ToUInt64(toc, o);
+                uint size = (uint)((packed >> 16) & 0xFFFFFF);
+                if (size == 0) size = BitConverter.ToUInt32(toc, o + 8);
+                long at = (long)((packed >> 40) & 0xFFFFFF) * Rpf7.BlockSize;
+                var data = new byte[size];
+                fs.Position = at;
+                ReadExact(fs, data);
+                data = keys.DecryptAes(data);
+                fs.Position = at;
+                fs.Write(data, 0, data.Length);
+                BitConverter.TryWriteBytes(toc.AsSpan(o + 12, 4), 0u);
+            }
+        }
+
+        fs.Position = 12;
+        fs.Write(BitConverter.GetBytes(Rpf7.EncryptionOpen));
+        fs.Write(toc);
+        fs.Write(names);
+        fs.Flush(true);
+        return true;
+    }
 
     private static void ReadExact(Stream s, byte[] buffer)
     {

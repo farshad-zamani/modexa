@@ -1,18 +1,24 @@
-﻿using System.Windows;
+using System.Globalization;
+using System.IO;
+using System.Windows;
 using System.Windows.Controls;
 using Modexa.App.Navigation;
 using Modexa.App.Services;
-using Modexa.Core.Format;
 using Modexa.Core.I18n;
 using Modexa.Core.Install;
 using Modexa.Core.Licensing;
-using WinForms = System.Windows.Forms;
 
 namespace Modexa.App.Views;
 
+/// <summary>
+/// My Mods: everything installed on every game, grouped by game. Free and Plus see the list; Pro
+/// adds management here (uninstall, open the game folder). Installing — and uninstalling for every
+/// tier — happens on each game's own page.
+/// </summary>
 public partial class ModsView : UserControl
 {
     private readonly INavigator _nav;
+    private bool _busy;
 
     public ModsView(INavigator nav)
     {
@@ -20,19 +26,28 @@ public partial class ModsView : UserControl
         InitializeComponent();
         Loaded += (_, _) =>
         {
-            RefreshList();
-            RefreshProCard(ThemeService.CurrentTier);
-            ThemeService.TierChanged += RefreshProCard;
+            ThemeService.TierChanged -= OnTier;
+            ThemeService.TierChanged += OnTier;
+            Loc.Instance.LanguageChanged -= Refresh;
+            Loc.Instance.LanguageChanged += Refresh;
+            OnTier(ThemeService.CurrentTier);
         };
-        Unloaded += (_, _) => ThemeService.TierChanged -= RefreshProCard;
+        Unloaded += (_, _) =>
+        {
+            ThemeService.TierChanged -= OnTier;
+            Loc.Instance.LanguageChanged -= Refresh;
+        };
     }
 
-    private void RefreshProCard(LicenseTier tier)
+    private static bool IsPro => ThemeService.CurrentTier == LicenseTier.Pro;
+
+    private void OnTier(LicenseTier tier)
     {
         bool pro = tier == LicenseTier.Pro;
         ProCardDesc.Bind(TextBlock.TextProperty, pro ? "Pro_Card_ActiveDesc" : "Pro_Card_Desc");
         BtnActivatePro.Visibility = pro ? Visibility.Collapsed : Visibility.Visible;
         ProActiveChip.Visibility = pro ? Visibility.Visible : Visibility.Collapsed;
+        Refresh();
     }
 
     private void ActivatePro_Click(object sender, RoutedEventArgs e)
@@ -42,190 +57,91 @@ public partial class ModsView : UserControl
 
     private void Back_Click(object sender, RoutedEventArgs e) => _nav.GoHome();
 
-    // ---- Drag & drop / browse ----
-
-    private static readonly string[] RawExts = { ".oiv", ".oivs", ".rpf", ".zip" };
-
-    private void Root_DragOver(object sender, DragEventArgs e)
+    private void Refresh()
     {
-        bool ok = FirstMxa(e) != null || FirstRaw(e) != null;
-        e.Effects = ok ? DragDropEffects.Copy : DragDropEffects.None;
-        SetDropHighlight(ok);
-        e.Handled = true;
-    }
-
-    private void Root_DragLeave(object sender, DragEventArgs e) => SetDropHighlight(false);
-
-    private void SetDropHighlight(bool on)
-    {
-        DropOutline.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty, on ? "Stroke.Accent" : "Stroke.Strong");
-        DropBg.SetResourceReference(Border.BackgroundProperty, on ? "Bg.Elevated" : "Bg.Panel");
-    }
-
-    private void Root_Drop(object sender, DragEventArgs e)
-    {
-        SetDropHighlight(false);
-        // .mxa -> licensed install; raw mod files -> Pro "install any mod".
-        var mxa = FirstMxa(e);
-        if (mxa != null) { _ = InstallAsync(mxa); return; }
-        var raw = FirstRaw(e);
-        if (raw != null) _ = InstallRawAsync(raw);
-    }
-
-    private void Browse_Click(object sender, RoutedEventArgs e)
-    {
-        using var dlg = new WinForms.OpenFileDialog
-        {
-            Filter = "Modexa package (*.mxa)|*.mxa",
-            Title = Loc.Instance["Mods_SelectPackage"]
-        };
-        if (dlg.ShowDialog() == WinForms.DialogResult.OK)
-            _ = InstallAsync(dlg.FileName);
-    }
-
-    private static string? FirstMxa(DragEventArgs e)
-    {
-        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return null;
-        var files = (string[])e.Data.GetData(DataFormats.FileDrop);
-        // Extension check only here: DragOver fires continuously, so no file I/O on this path.
-        return files.FirstOrDefault(f => f.EndsWith(MxaFile.Extension, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static string? FirstRaw(DragEventArgs e)
-    {
-        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return null;
-        var files = (string[])e.Data.GetData(DataFormats.FileDrop);
-        return files.FirstOrDefault(f => RawExts.Any(x => f.EndsWith(x, StringComparison.OrdinalIgnoreCase)));
-    }
-
-    private void InstallAny_Click(object sender, RoutedEventArgs e)
-    {
-        using var dlg = new WinForms.OpenFileDialog
-        {
-            Filter = "Mods (*.oiv;*.oivs;*.rpf;*.zip)|*.oiv;*.oivs;*.rpf;*.zip",
-            Title = Loc.Instance["Mods_SelectAny"]
-        };
-        if (dlg.ShowDialog() == WinForms.DialogResult.OK)
-            _ = InstallRawAsync(dlg.FileName);
-    }
-
-    /// <summary>Entry point for a file dropped anywhere in the app: route .mxa vs raw mod files.</summary>
-    public Task HandleDrop(string path)
-    {
-        if (path.EndsWith(MxaFile.Extension, StringComparison.OrdinalIgnoreCase))
-            return InstallAsync(path);
-        return InstallRawAsync(path);
-    }
-
-    public Task InstallAsync(string mxaPath)
-        => RunInstallAsync((owner, phase) => PaidModService.InstallAsync(mxaPath, owner, phase));
-
-    private Task InstallRawAsync(string path)
-        => RunInstallAsync((owner, phase) => PaidModService.InstallRawAsync(path, owner, phase));
-
-    private async Task RunInstallAsync(Func<Window, IProgress<string>, Task<PaidModResult>> install)
-    {
-        // The overlay appears once real work starts (after any license prompt), with a live phase label.
-        var phase = new Progress<string>(key =>
-        {
-            OverlayText.Bind(TextBlock.TextProperty, key);
-            SetBusy(true);
-        });
-        try
-        {
-            var result = await install(Window.GetWindow(this)!, phase);
-            SetBusy(false);
-            RefreshList();
-            DialogWindow.Show(result.Message, result.Success ? DialogKind.Success : DialogKind.Warning);
-        }
-        catch (Exception ex)
-        {
-            SetBusy(false);
-            DialogWindow.Show(ex.Message, DialogKind.Error);
-        }
-    }
-
-    private void SetBusy(bool busy)
-    {
-        Overlay.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
-        // The shimmer only runs while the overlay is actually shown.
-        OverlayBar.IsIndeterminate = busy;
-    }
-
-    // ---- Installed list ----
-
-    private void RefreshList()
-    {
-        InstalledList.Items.Clear();
+        Groups.Children.Clear();
         var mods = InstalledModsStore.All();
-        CountText.Text = mods.Count.ToString();
+        SummaryText.Text = Loc.Instance.Format("Mods_Summary", mods.Count,
+            mods.Select(m => m.GameFolder).Distinct(StringComparer.OrdinalIgnoreCase).Count());
         EmptyNote.Visibility = mods.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        foreach (var m in mods)
-            InstalledList.Items.Add(BuildRow(m));
+
+        foreach (var g in mods.GroupBy(m => FolderKey(m.GameFolder), StringComparer.OrdinalIgnoreCase)
+                              .OrderBy(g => Title(g.First())))
+        {
+            var header = new Grid { Margin = new Thickness(0, 24, 0, 12) };
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var titles = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            var titleRow = new StackPanel { Orientation = Orientation.Horizontal };
+            var title = new TextBlock { Text = Title(g.First()), Style = (Style)FindResource("Display.H2"), VerticalAlignment = VerticalAlignment.Center };
+            title.SetResourceReference(TextBlock.FontFamilyProperty, "Font.En.Display");
+            titleRow.Children.Add(title);
+            var chip = new Border { Style = (Style)FindResource("Chip"), Margin = new Thickness(10, 0, 0, 0), MinHeight = 22, Padding = new Thickness(8, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
+            var count = new TextBlock { Text = g.Count().ToString(CultureInfo.InvariantCulture), Style = (Style)FindResource("Label.Caps"), FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+            count.SetResourceReference(TextBlock.FontFamilyProperty, "Font.En.Hud");
+            chip.Child = count;
+            titleRow.Children.Add(chip);
+            titles.Children.Add(titleRow);
+            titles.Children.Add(new TextBlock
+            {
+                Text = g.Key,
+                Style = (Style)FindResource("Text.Desc"),
+                FlowDirection = FlowDirection.LeftToRight,
+                TextAlignment = Loc.Instance.IsRtl ? TextAlignment.Right : TextAlignment.Left,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Margin = new Thickness(0, 2, 0, 0)
+            });
+            header.Children.Add(titles);
+
+            var open = new Button { Style = (Style)FindResource("GhostButton.Small"), Tag = g.Key, VerticalAlignment = VerticalAlignment.Center };
+            var openContent = new StackPanel { Orientation = Orientation.Horizontal };
+            openContent.Children.Add(new TextBlock { Style = (Style)FindResource("Icon"), FontSize = 14, Text = "" });
+            var openText = new TextBlock { Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+            openText.Bind(TextBlock.TextProperty, "Common_OpenFolder");
+            openContent.Children.Add(openText);
+            open.Content = openContent;
+            open.Click += (s, _) => ModInstallService.OpenFolder(((FrameworkElement)s).Tag as string);
+            Grid.SetColumn(open, 1);
+            header.Children.Add(open);
+            Groups.Children.Add(header);
+
+            // Pro: manage right here. Free / Plus: view only (uninstall on the game's page).
+            foreach (var m in g.OrderByDescending(m => m.InstalledUtc))
+                Groups.Children.Add(ModRow.Build(this, m, onUninstall: IsPro ? Uninstall_Click : null));
+        }
     }
 
-    private FrameworkElement BuildRow(ModInstallRecord record)
+    private static string FolderKey(string folder)
     {
-        var card = new Border
-        {
-            Style = (Style)FindResource("Card"),
-            Padding = new Thickness(20, 16, 20, 16),
-            Margin = new Thickness(0, 0, 0, 10)
-        };
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var tile = new Border { Style = (Style)FindResource("IconTile"), Width = 40, Height = 40, CornerRadius = new CornerRadius(10) };
-        var glyph = new TextBlock { Style = (Style)FindResource("Icon"), Text = "" };
-        glyph.SetResourceReference(TextBlock.ForegroundProperty, "Accent");
-        tile.Child = glyph;
-        grid.Children.Add(tile);
-
-        var info = new StackPanel { Margin = new Thickness(14, 0, 16, 0), VerticalAlignment = VerticalAlignment.Center };
-        info.Children.Add(new TextBlock
-        {
-            Text = string.IsNullOrWhiteSpace(record.Name) ? "(mod)" : record.Name,
-            Style = (Style)FindResource("Text.CardTitle"),
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            TextWrapping = TextWrapping.NoWrap
-        });
-        var meta = new TextBlock
-        {
-            Text = $"{record.ModType}  ·  {record.Game}  ·  {Loc.Instance.Format("Mods_Files", record.Files.Count)}",
-            Style = (Style)FindResource("Text.Desc"),
-            Margin = new Thickness(0, 3, 0, 0)
-        };
-        info.Children.Add(meta);
-        Grid.SetColumn(info, 1);
-        grid.Children.Add(info);
-
-        var uninstall = new Button
-        {
-            Style = (Style)FindResource("DangerButton"),
-            VerticalAlignment = VerticalAlignment.Center,
-            Tag = record
-        };
-        uninstall.Bind(ContentProperty, "Mods_Uninstall");
-        uninstall.Click += Uninstall_Click;
-        Grid.SetColumn(uninstall, 2);
-        grid.Children.Add(uninstall);
-
-        card.Child = grid;
-        return card;
+        try { return Path.GetFullPath(folder).TrimEnd('\\'); }
+        catch { return folder; }
     }
+
+    private static string Title(ModInstallRecord m)
+        => !string.IsNullOrWhiteSpace(m.GameTitle) ? m.GameTitle!
+            : m.Game switch { "GtaV" => "Grand Theft Auto V", "GtaSa" => "Grand Theft Auto San Andreas", _ => m.Game };
 
     private async void Uninstall_Click(object sender, RoutedEventArgs e)
     {
-        if (((FrameworkElement)sender).Tag is not ModInstallRecord record) return;
-        if (!DialogWindow.Confirm(Loc.Instance.Format("Mods_Uninstall_Confirm", record.Name), danger: true))
-            return;
+        if (_busy || ((FrameworkElement)sender).Tag is not ModInstallRecord record) return;
+        if (!DialogWindow.Confirm(Loc.Instance.Format("Mods_Uninstall_Confirm", record.Name), danger: true)) return;
 
-        SetBusy(true);
-        try { await Task.Run(() => PaidModService.Uninstall(record)); }
-        catch (Exception ex) { DialogWindow.Show(ex.Message, DialogKind.Error); }
-        finally { SetBusy(false); }
-        RefreshList();
+        _busy = true;
+        Overlay.Visibility = Visibility.Visible;
+        OverlayBar.IsIndeterminate = true;
+        try
+        {
+            var result = await ModInstallService.UninstallAsync(record);
+            Overlay.Visibility = Visibility.Collapsed;
+            OverlayBar.IsIndeterminate = false;
+            DialogWindow.Show(result.Message, result.Success ? DialogKind.Success : DialogKind.Warning);
+        }
+        finally
+        {
+            _busy = false;
+            Overlay.Visibility = Visibility.Collapsed;
+            OverlayBar.IsIndeterminate = false;
+            Refresh();
+        }
     }
 }

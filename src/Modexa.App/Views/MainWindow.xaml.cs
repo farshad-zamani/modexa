@@ -260,14 +260,84 @@ public partial class MainWindow : Window, INavigator
         Activate();
         Topmost = true; Topmost = false; // reliably bring to front
         if (string.IsNullOrWhiteSpace(path)) return;
-
-        var view = new ModsView(this);
-        Navigate(view);
-        Dispatcher.BeginInvoke(new Action(async () => await view.HandleDrop(path)),
+        Dispatcher.BeginInvoke(new Action(async () => await OpenModFileAsync(path)),
             System.Windows.Threading.DispatcherPriority.Background);
     }
 
     private static readonly string[] DropExts = { ".mxa", ".oiv", ".oivs", ".rpf", ".zip" };
+
+    /// <summary>
+    /// A mod file opened from Explorer or dropped on the window: it is installed on its game's page
+    /// (where the game folder is known). The current page is used when it is the right game.
+    /// </summary>
+    private async Task OpenModFileAsync(string path)
+    {
+        bool mxa = path.EndsWith(Modexa.Core.Format.MxaFile.Extension, StringComparison.OrdinalIgnoreCase);
+        try
+        {
+            if (!mxa)
+            {
+                // OIV and Pro raw mods are GTA V only.
+                if (PART_Content.Content is GtaVView here) { await here.InstallFileAsync(path); return; }
+                var edition = ChooseGtaVEdition();
+                if (edition == null) return;
+                Navigate(new GtaVView(this, edition.Value) { PendingFile = path });
+                return;
+            }
+
+            var info = await Task.Run(() => Modexa.Core.Format.MxaFile.ReadInfo(path));
+            var game = GameOfPackage(info.Game);
+            if (game == null)
+            {
+                DialogWindow.Show(Loc.Instance["Mxa_Corrupt"], DialogKind.Warning);
+                return;
+            }
+            if (game == Modexa.Core.Games.GameId.GtaV)
+            {
+                Modexa.Core.Games.GameEdition? edition =
+                    Enum.TryParse<Modexa.Core.Games.GameEdition>(info.Edition, true, out var ed) && ed != Modexa.Core.Games.GameEdition.Unknown
+                        ? ed : null;
+                if (edition == null && PART_Content.Content is GtaVView any) { await any.InstallFileAsync(path); return; }
+                edition ??= ChooseGtaVEdition();
+                if (edition == null) return;
+                Navigate(new GtaVView(this, edition.Value) { PendingFile = path });
+                return;
+            }
+            if (PART_Content.Content is SimpleGameView sv && sv.Game == game) { await sv.InstallFileAsync(path); return; }
+            Navigate(new SimpleGameView(this, game.Value) { PendingFile = path });
+        }
+        catch (Exception ex)
+        {
+            Modexa.Core.Diagnostics.Log.Error("Open mod file", ex);
+            DialogWindow.Show($"{Loc.Instance["Mxa_Corrupt"]}\n{ex.Message}", DialogKind.Warning);
+        }
+    }
+
+    private static Modexa.Core.Games.GameId? GameOfPackage(string key) => key.ToLowerInvariant() switch
+    {
+        "gtav" => Modexa.Core.Games.GameId.GtaV,
+        "gtasa" or "gtasanandreas" => Modexa.Core.Games.GameId.GtaSanAndreas,
+        "gtaiv" => Modexa.Core.Games.GameId.GtaIV,
+        "rdr1" or "reddeadredemption1" => Modexa.Core.Games.GameId.RedDeadRedemption1,
+        "rdr2" or "reddeadredemption2" => Modexa.Core.Games.GameId.RedDeadRedemption2,
+        "cp2077" or "cyberpunk2077" => Modexa.Core.Games.GameId.Cyberpunk2077,
+        _ => null
+    };
+
+    /// <summary>The GTA V edition to install into: the one the user has, or ask when both are set up.</summary>
+    private Modexa.Core.Games.GameEdition? ChooseGtaVEdition()
+    {
+        if (PART_Content.Content is GtaVView current) return current.Edition;
+        var s = ((App)Application.Current).Settings;
+        bool legacy = !string.IsNullOrWhiteSpace(s.GtaVFolder), enhanced = !string.IsNullOrWhiteSpace(s.GtaVEnhancedFolder);
+        if (legacy && enhanced)
+        {
+            int pick = DialogWindow.Choose(Loc.Instance["Choose_Edition_Install"], "GTA V Legacy", "GTA V Enhanced");
+            if (pick < 0) return null;
+            return pick == 0 ? Modexa.Core.Games.GameEdition.Legacy : Modexa.Core.Games.GameEdition.Enhanced;
+        }
+        return enhanced ? Modexa.Core.Games.GameEdition.Enhanced : Modexa.Core.Games.GameEdition.Legacy;
+    }
 
     private void Window_DragOver(object sender, DragEventArgs e)
     {
@@ -279,10 +349,8 @@ public partial class MainWindow : Window, INavigator
     {
         string? path = FromDrop(e);
         if (path == null) return;
-        // Route the install through the Mods view so the user sees it land there.
-        var view = new ModsView(this);
-        Navigate(view);
-        Dispatcher.BeginInvoke(new Action(async () => await view.HandleDrop(path)),
+        // Installs happen on the game's page, so the mod lands in the right game folder.
+        Dispatcher.BeginInvoke(new Action(async () => await OpenModFileAsync(path)),
             System.Windows.Threading.DispatcherPriority.Background);
     }
 

@@ -11,9 +11,11 @@ public sealed class BackupEntry
     public string? OriginalBackup { get; set; }
     public bool WasCreated { get; set; }
 
-    /// <summary>For a file replaced INSIDE an archive: the entry's index and its original TOC record.</summary>
-    public int? ArchiveEntryIndex { get; set; }
-    public string? TocRecord { get; set; }
+
+    /// <summary>For a file replaced INSIDE an archive: its path there (original content in <see cref="OriginalBackup"/>).</summary>
+    public string? ArchiveEntryPath { get; set; }
+
+    public bool IsArchiveEntry => ArchiveEntryPath != null;
 }
 
 /// <summary>
@@ -40,7 +42,7 @@ public sealed class BackupSession
     public void TrackBeforeWrite(string relativePath)
     {
         string full = Path.Combine(_gameFolder, relativePath);
-        if (_entries.Any(e => e.ArchiveEntryIndex == null
+        if (_entries.Any(e => !e.IsArchiveEntry
                               && string.Equals(e.RelativePath, relativePath, StringComparison.OrdinalIgnoreCase)))
             return; // already have an original/record for this path
 
@@ -65,19 +67,23 @@ public sealed class BackupSession
     }
 
     /// <summary>
-    /// Call before replacing a file inside an archive (e.g. gameconfig.xml in update.rpf). Only the
-    /// first change per entry is recorded, so a revert always returns to the true original.
+    /// Call before replacing a file inside an archive (e.g. gameconfig.xml in update.rpf), passing
+    /// its current content. Only the first change per entry is recorded, so a revert always returns
+    /// to the true original. Content (not TOC positions) is kept: later edits may reorder the TOC.
     /// </summary>
-    public void TrackArchiveEntry(string archiveRelativePath, int entryIndex, byte[] originalTocRecord)
+    public void TrackArchiveFile(string archiveRelativePath, string entryPath, byte[] originalContent)
     {
-        if (_entries.Any(e => e.ArchiveEntryIndex == entryIndex
+        string entry = entryPath.Replace('\\', '/').Trim('/');
+        if (_entries.Any(e => string.Equals(e.ArchiveEntryPath, entry, StringComparison.OrdinalIgnoreCase)
                               && string.Equals(e.RelativePath, archiveRelativePath, StringComparison.OrdinalIgnoreCase)))
             return;
+        string backupPath = Path.Combine(AppPaths.BackupsDir, $"{SafeKey(archiveRelativePath + "_" + entry)}.{Guid.NewGuid():N}.bak");
+        File.WriteAllBytes(backupPath, originalContent);
         _entries.Add(new BackupEntry
         {
             RelativePath = archiveRelativePath,
-            ArchiveEntryIndex = entryIndex,
-            TocRecord = Convert.ToBase64String(originalTocRecord)
+            ArchiveEntryPath = entry,
+            OriginalBackup = backupPath
         });
         Save();
     }
@@ -86,19 +92,25 @@ public sealed class BackupSession
     public void RevertAll()
     {
         // Archive entries first: their archive may itself be a file we created and delete below.
-        foreach (var e in _entries.Where(x => x.ArchiveEntryIndex != null && x.TocRecord != null))
+        var deletedLater = new HashSet<string>(_entries.Where(x => !x.IsArchiveEntry && x.WasCreated).Select(x => x.RelativePath),
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var e in _entries.Where(x => x.IsArchiveEntry))
         {
+            if (deletedLater.Contains(e.RelativePath)) continue; // the whole archive goes anyway
             string archive = Path.Combine(_gameFolder, e.RelativePath);
             try
             {
-                if (File.Exists(archive))
-                    Rpf.RpfArchive.WriteTocEntry(archive, e.ArchiveEntryIndex!.Value, Convert.FromBase64String(e.TocRecord!));
+                if (!File.Exists(archive)) continue;
+                if (e.OriginalBackup == null || !File.Exists(e.OriginalBackup)) continue;
+                var ed = Rpf.RpfEditor.Open(archive);
+                ed.SetFile(e.ArchiveEntryPath!, File.ReadAllBytes(e.OriginalBackup));
+                ed.Commit();
             }
-            catch { /* continue reverting the rest */ }
+            catch (Exception ex) { Diagnostics.Log.Error("Revert archive entry", ex); /* continue with the rest */ }
         }
 
         var touchedDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var e in _entries.Where(x => x.ArchiveEntryIndex == null))
+        foreach (var e in _entries.Where(x => !x.IsArchiveEntry))
         {
             string full = Path.Combine(_gameFolder, e.RelativePath);
             try

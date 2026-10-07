@@ -40,15 +40,20 @@ public static class DownloadService
         AppPaths.EnsureDir(Path.GetDirectoryName(destPath)!);
         string tempPath = destPath + ".part";
 
+        // No overall timeout (packs are large), but a connection that delivers nothing for a minute is
+        // treated as dead instead of hanging the progress dialog forever.
+        using var stall = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        stall.CancelAfter(StallTimeout);
+
         try
         {
             // ConfigureAwait(false) throughout: the copy loop must not bounce every chunk through the
             // UI thread (that floods the dispatcher and starves input -> "Not Responding").
-            using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, stall.Token).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
 
             long? total = response.Content.Headers.ContentLength;
-            await using var src = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            await using var src = await response.Content.ReadAsStreamAsync(stall.Token).ConfigureAwait(false);
             await using (var dst = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
             {
                 var buffer = new byte[128 * 1024];
@@ -57,8 +62,9 @@ public static class DownloadService
                 int? lastPercent = null;
                 long lastReportTicks = 0;
                 progress?.Report(new DownloadProgress(0, total));
-                while ((read = await src.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+                while ((read = await src.ReadAsync(buffer, stall.Token).ConfigureAwait(false)) > 0)
                 {
+                    stall.CancelAfter(StallTimeout);
                     await dst.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
                     received += read;
 
@@ -85,8 +91,15 @@ public static class DownloadService
                 }
             }
 
-            if (File.Exists(destPath)) File.Delete(destPath);
-            File.Move(tempPath, destPath);
+            if (total is > 0 && new FileInfo(tempPath).Length != total.Value)
+                throw new IOException("The download was cut off before it finished. Please try again.");
+
+            File.Move(tempPath, destPath, overwrite: true);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            TryDelete(tempPath);
+            throw new TimeoutException("The download stopped responding. Check your internet connection and try again.");
         }
         catch
         {
@@ -94,6 +107,8 @@ public static class DownloadService
             throw;
         }
     }
+
+    private static readonly TimeSpan StallTimeout = TimeSpan.FromSeconds(60);
 
     public static async Task<string> ComputeSha256Async(string path, CancellationToken ct = default)
     {

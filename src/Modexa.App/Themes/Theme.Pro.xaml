@@ -14,7 +14,10 @@
     <Color x:Key="C.Accent.Deep">#FFB8862A</Color>
 
     <SolidColorBrush x:Key="Bg.Base" Color="{DynamicResource C.Bg.Base}"/>
-    <SolidColorBrush x:Key="Bg.Panel" Color="{DynamicResource C.Bg.Panel}"/>
+    <!-- Slightly translucent cards let the gold veins show through faintly. -->
+    <SolidColorBrush x:Key="Bg.Panel" Color="{DynamicResource C.Bg.Panel}" Opacity="0.88"/>
+    <!-- Opaque panel colour for top-level dialog windows (Bg.Panel may be translucent). -->
+    <SolidColorBrush x:Key="Bg.Dialog" Color="{DynamicResource C.Bg.Panel}"/>
     <SolidColorBrush x:Key="Bg.Elevated" Color="{DynamicResource C.Bg.Elevated}"/>
     <SolidColorBrush x:Key="Bg.Inset" Color="{DynamicResource C.Bg.Inset}"/>
 

@@ -1,34 +1,38 @@
-# Credits & Third-Party Notices
+# Credits & Thanks
 
-## Bundled fonts (SIL Open Font License 1.1)
+Modexa automates what the modding community built. Thank you to everyone below.
+Formal license texts: [THIRD-PARTY-NOTICES.txt](../THIRD-PARTY-NOTICES.txt).
 
-Modexa bundles the following fonts under the SIL OFL 1.1. Each remains under its own license;
-the OFL permits bundling and redistribution with the software.
+## Projects that shaped Modexa
 
-- **Chakra Petch** — © Cadson Demak. https://github.com/google/fonts/tree/main/ofl/chakrapetch
-- **Rajdhani** — © Indian Type Foundry. https://github.com/google/fonts/tree/main/ofl/rajdhani
-- **Vazirmatn** — © Saber Rastikerdar. https://github.com/rastikerdar/vazirmatn
+- **[CodeWalker](https://github.com/dexyfex/CodeWalker)** (dexyfex) — the reference for GTA V RPF7
+  archives. Modexa's "copy to mods folder and convert to OPEN" follows its approach, and official
+  builds use its key bundle, which only opens with the user's own GTA V executable.
+- **Neodymium** — the GTA V NG / AES archive cryptography (MIT) that Modexa re-implements.
+- **[CodeWalkerProjects](https://github.com/crxhvrd/CodeWalkerProjects)** (crxhvrd) — its standalone
+  OIV installer and uninstaller were the guide for Modexa's OIV support: mods-folder handling,
+  the `.oivs` super-package format, and reversing XML / text edits on uninstall. Modexa took the
+  ideas further: per-edit journals, handing originals over between mods so they can be removed in
+  any order, and exact byte-for-byte restores.
+- **OpenIV** and **OpenIV.asi / OpenRPF** — the `mods` folder convention, the OIV package format and
+  the runtime hook.
+- **RPFXplorer** (lucienlmy, MIT) — a clean RPF7 format reference.
 
-## Libraries
+## Bundled
 
-- **SharpCompress** (MIT) — RAR/ZIP/7z extraction of prepare packs. https://github.com/adamhathcock/sharpcompress
+- **SharpCompress** (MIT) — RAR/ZIP/7z extraction of the prerequisite packs.
+- Fonts under the SIL OFL 1.1: **Vazirmatn** (Saber Rastikerdar), **Chakra Petch** (Cadson Demak),
+  **Rajdhani** (Indian Type Foundry).
+- Official builds: **OpenIV.asi** and its ASI loader (OpenIV team).
 
-## Prepare packs
+## Downloaded at runtime (not bundled)
 
-The free prepare packs are hosted by WTMod.com and contain third-party tools (ScriptHookV,
-ScriptHookVDotNet, Lua plugin, OpenRPF, Menyoo, gameconfig by the community, Heap/Packfile limit
-adjusters). They are downloaded by the user from WTMod's server; Modexa does not bundle them.
-
-## Modding ecosystem
-
-Modexa does not introduce a new modding method. It automates steps that already exist in the
-GTA modding community. We gratefully acknowledge:
-
-- **OpenIV** and **OpenIV.asi / OpenRPF** — the mods-folder convention and RPF runtime hook.
-- **CodeWalker** (dexyfex; crxhvrd fork) — reference for RPF7 handling and OIV installation.
-- **RPFXplorer** (lucienlmy, MIT) — clean RPF7 format reference.
-- **ScriptHookV** (Alexander Blade), **ScriptHookVDotNet**, **Menyoo** (MAFINS).
-- **Lenny's Mod Loader**, **CLEO**, and **Mod Loader** (thelink2012) for GTA San Andreas.
+The free prerequisite packs are hosted by **[WTMod.com](https://wtmod.com)** and contain
+**ScriptHookV** (Alexander Blade), **ScriptHookVDotNet**, the **Lua** plugin, **OpenRPF**,
+**Menyoo** (MAFINS), the **heap / packfile limit adjusters**, community **gameconfig.xml** files,
+**CLEO**, **Lenny's Mod Loader** and **Mod Loader** (thelink2012).
 
 All game trademarks belong to their respective owners. Modexa is a third-party tool and is not
-affiliated with or endorsed by Rockstar Games or Take-Two Interactive.
+affiliated with or endorsed by Rockstar Games, Take-Two Interactive or CD PROJEKT.
+
+Developed by [cloudtart.com](https://cloudtart.com) · Made for [wtmod.com](https://wtmod.com)

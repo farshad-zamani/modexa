@@ -1,9 +1,10 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Controls;
 using Modexa.App.Navigation;
 using Modexa.App.Services;
 using Modexa.Core.Games;
 using Modexa.Core.I18n;
+using Modexa.Core.Install;
 using Modexa.Core.Prepare;
 using WinForms = System.Windows.Forms;
 
@@ -14,7 +15,7 @@ namespace Modexa.App.Views;
 /// runs on a worker thread: game folders often live on slow or sleeping HDDs and backups copy
 /// multi-GB archives, which previously froze the window ("Not Responding").
 /// </summary>
-public partial class GtaVView : UserControl
+public partial class GtaVView : UserControl, IInstallHost
 {
     private readonly INavigator _nav;
     private readonly GameEdition _edition;
@@ -22,6 +23,11 @@ public partial class GtaVView : UserControl
     private PrepareManifest _manifest = PrepareManifest.Empty();
     private CancellationTokenSource? _cts;
     private string? _folderKey = "Common_Detecting";
+
+    /// <summary>A mod file to install once the game folder is known (opened from Explorer / dropped on the window).</summary>
+    public string? PendingFile { get; set; }
+
+    public GameEdition Edition => _edition;
 
     /// <param name="edition">Legacy or Enhanced — each is its own page, folder and bundle set.</param>
     public GtaVView(INavigator nav, GameEdition edition)
@@ -35,8 +41,26 @@ public partial class GtaVView : UserControl
         Unloaded += OnUnloaded;
         ThemeService.TierChanged += ApplyTier;
         ApplyTier(ThemeService.CurrentTier);
+        InstallPanel.Host = this;
         RefreshFolderText();
     }
+
+    /// <summary>Installs a mod file into this page's game (used when a file is dropped on the window).</summary>
+    public Task InstallFileAsync(string path) => InstallPanel.InstallAsync(path);
+
+    // ---- IInstallHost (the page overlay shows install / uninstall progress) ----
+
+    public void ShowBusy(string phaseKey, int? percent)
+    {
+        Overlay.Visibility = Visibility.Visible;
+        OverlayCancel.Visibility = Visibility.Collapsed;
+        OverlayPhase.Bind(TextBlock.TextProperty, phaseKey);
+        SetPercent(percent);
+    }
+
+    public void HideBusy() => ShowOverlay(false);
+
+    private void OpenFolder_Click(object sender, RoutedEventArgs e) => ModInstallService.OpenFolder(_install?.Folder);
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
@@ -96,6 +120,12 @@ public partial class GtaVView : UserControl
             RefreshFolderText();
         }
 
+        if (PendingFile is { } pending)
+        {
+            PendingFile = null;
+            await InstallPanel.InstallAsync(pending);
+        }
+
         // Refresh the prepare manifest from the client's remote (new builds) without blocking.
         try { _manifest = await Task.Run(PrepareManifest.RefreshAsync); } catch { }
     }
@@ -120,6 +150,9 @@ public partial class GtaVView : UserControl
 
         _folderKey = null;
         RefreshFolderText();
+        BtnOpenFolder.IsEnabled = true;
+        InstallPanel.SetTarget(new GameTarget(GameCatalog.ForEdition(_edition), install.Folder,
+            GameCatalog.Get(GameCatalog.ForEdition(_edition)).DisplayName, _edition));
         EditionText.Text = install.Edition == GameEdition.Unknown ? "—" : install.Edition.ToString();
         VersionText.Text = install.Version is { } v && v.Build > 0 ? v.FileVersion : "—";
         await RefreshPrepareStateAsync();
@@ -198,6 +231,7 @@ public partial class GtaVView : UserControl
             {
                 PreparePhase.Downloading => "Dl_Downloading",
                 PreparePhase.Verifying => "Dl_Verifying",
+                PreparePhase.PreparingArchive => "Prep_CreatingModsRpf",
                 PreparePhase.Extracting => "Dl_Extracting",
                 PreparePhase.Installing => "Dl_Installing",
                 _ => "Common_Done"
@@ -261,13 +295,18 @@ public partial class GtaVView : UserControl
         {
             case GameConfigOutcome.Applied:
                 lines.Add(Loc.Instance.Format("Prep_GameConfigApplied", GameConfigLabels.Label(r.GameConfigVariant ?? "")));
+                if (_edition == GameEdition.Legacy) lines.Add(Loc.Instance["Prep_AdjustersInstalled"]);
+                if (r.ModsRpfCreated) lines.Add(Loc.Instance["Prep_ModsRpfCreated"]);
                 break;
             case GameConfigOutcome.NeedsModsUpdateRpf:
             case GameConfigOutcome.UpdateRpfEncrypted:
             case GameConfigOutcome.NoGameConfigEntry:
                 kind = DialogKind.Warning;
                 lines.Add(Loc.Instance[_edition == GameEdition.Legacy ? "Prep_AdjustersInstalled" : "Prep_NothingElse"]);
-                lines.Add(Loc.Instance["Prep_NeedsModsRpf"]);
+                string reason = r.ModsRpfError != null
+                    ? ModsArchiveMessages.For(r.ModsRpfError)
+                    : Loc.Instance.Format("ModsRpf_Failed", r.GameConfig.ToString());
+                lines.Add(Loc.Instance.Format("Prep_NeedsModsRpf", reason));
                 break;
             case GameConfigOutcome.Skipped:
                 kind = DialogKind.Info;
@@ -343,7 +382,7 @@ public partial class GtaVView : UserControl
         }
         string folder = _install.Folder;
 
-        if (!await Task.Run(() => PrepareService.HasBackups(folder)))
+        if (!await Task.Run(() => PrepareService.HasBackups(folder) || InstalledModsStore.ForFolder(folder).Count > 0))
         {
             DialogWindow.Show(Loc.Instance["GtaV_Revert_Nothing"], DialogKind.Info);
             return;
@@ -351,13 +390,24 @@ public partial class GtaVView : UserControl
         if (!DialogWindow.Confirm(Loc.Instance["GtaV_Revert_Confirm"], danger: true))
             return;
 
+        if (await Task.Run(() => GameProcess.IsRunning(folder)))
+        {
+            DialogWindow.Show(Loc.Instance["Mods_GameRunning"], DialogKind.Warning);
+            return;
+        }
+
         ShowOverlay(true, "Dl_Restoring");
         try
         {
+            // Mods first (newest first, each exactly as installed), then the prepare files.
+            var errors = await Task.Run(() => ModUninstaller.UninstallAll(folder));
             await Task.Run(() => PrepareService.Revert(folder));
             ShowOverlay(false);
-            DialogWindow.Show(Loc.Instance["Common_Done"], DialogKind.Success);
+            DialogWindow.Show(errors.Count == 0 ? Loc.Instance["Common_Done"]
+                : Loc.Instance.Format("Mods_UninstallIncomplete", string.Join("\n", errors.Take(6).Select(x => "• " + x))),
+                errors.Count == 0 ? DialogKind.Success : DialogKind.Warning);
             await RefreshPrepareStateAsync();
+            InstallPanel.Refresh();
         }
         catch (Exception ex)
         {

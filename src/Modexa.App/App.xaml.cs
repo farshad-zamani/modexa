@@ -46,7 +46,6 @@ public partial class App : Application
         }
 
         HookCrashHandlers();
-        AppPaths.MigrateLegacyData();
         Log.Prune();
         Log.Info($"Start v{typeof(App).Assembly.GetName().Version} data={AppPaths.DataDir}");
 

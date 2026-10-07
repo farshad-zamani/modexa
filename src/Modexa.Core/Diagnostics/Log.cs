@@ -11,7 +11,9 @@ public static class Log
 {
     private static readonly object Gate = new();
 
-    public static string CurrentFile => Path.Combine(AppPaths.LogsDir, $"modexa-{DateTime.Now:yyyy-MM-dd}.log");
+    // Invariant culture: on a Persian-calendar Windows the file would otherwise be named 1405-07-15.
+    public static string CurrentFile => Path.Combine(AppPaths.LogsDir,
+        "modexa-" + DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture) + ".log");
 
     public static void Info(string message) => Write("INFO", message);
 
@@ -24,7 +26,8 @@ public static class Log
             lock (Gate)
             {
                 AppPaths.EnsureDir(AppPaths.LogsDir);
-                File.AppendAllText(CurrentFile, $"{DateTime.Now:HH:mm:ss.fff} [{level}] {message}{Environment.NewLine}", Encoding.UTF8);
+                File.AppendAllText(CurrentFile,
+                    DateTime.Now.ToString("HH:mm:ss.fff", System.Globalization.CultureInfo.InvariantCulture) + $" [{level}] {message}{Environment.NewLine}", Encoding.UTF8);
             }
         }
         catch

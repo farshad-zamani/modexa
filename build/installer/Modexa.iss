@@ -1,4 +1,4 @@
-; ============================================================================================
+﻿; ============================================================================================
 ;  Modexa installer (Inno Setup 6.5+). Built by build\release.ps1 — do not run by hand unless
 ;  dist\Modexa-release\Modexa.exe is already the hardened, obfuscated build.
 ;
@@ -17,7 +17,7 @@
 #define SrcExe       AppExePath
 #define AppVersion   GetVersionNumbersString(SrcExe)
 #define Publisher    "CloudTart"
-#define PublisherUrl "https://rockstargame.ir"
+#define PublisherUrl "https://cloudtart.com"
 
 [Setup]
 AppId={{81B054EE-24D5-4ABE-886D-59730609CF89}
@@ -27,7 +27,7 @@ AppVerName={#AppName} {#AppVersion}
 AppPublisher={#Publisher}
 AppPublisherURL={#PublisherUrl}
 AppSupportURL={#PublisherUrl}
-AppCopyright=© CloudTart — commissioned by RockStarGame.ir
+AppCopyright=© CloudTart · Made for WTMod.com
 VersionInfoVersion={#AppVersion}
 DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
@@ -72,6 +72,8 @@ Name: "assocmxa"; Description: "{cm:AssocMxa}"; GroupDescription: "{cm:Additiona
 
 [Files]
 Source: "{#SrcExe}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"

@@ -4,6 +4,7 @@ using Modexa.App.Navigation;
 using Modexa.App.Services;
 using Modexa.Core.Games;
 using Modexa.Core.I18n;
+using Modexa.Core.Install;
 using Modexa.Core.Prepare;
 using WinForms = System.Windows.Forms;
 
@@ -14,7 +15,7 @@ namespace Modexa.App.Views;
 /// RDR2, Cyberpunk 2077). The right Mod Runner is picked by the detected game version. All disk work
 /// runs off the UI thread.
 /// </summary>
-public partial class SimpleGameView : UserControl
+public partial class SimpleGameView : UserControl, IInstallHost
 {
     private readonly INavigator _nav;
     private readonly GameId _game;
@@ -34,8 +35,28 @@ public partial class SimpleGameView : UserControl
         TitleText.Text = GameCatalog.Get(game).DisplayName;
         Loaded += OnLoaded;
         Unloaded += (_, _) => Loc.Instance.LanguageChanged -= RefreshFolderText;
+        InstallPanel.Host = this;
         RefreshFolderText();
     }
+
+    /// <summary>A Modexa package to install once the game folder is known (opened from Explorer).</summary>
+    public string? PendingFile { get; set; }
+
+    public GameId Game => _game;
+
+    public Task InstallFileAsync(string path) => InstallPanel.InstallAsync(path);
+
+    public void ShowBusy(string phaseKey, int? percent)
+    {
+        Overlay.Visibility = Visibility.Visible;
+        OverlayCancel.Visibility = Visibility.Collapsed;
+        OverlayPhase.Bind(TextBlock.TextProperty, phaseKey);
+        SetPercent(percent);
+    }
+
+    public void HideBusy() => ShowOverlay(false);
+
+    private void OpenFolder_Click(object sender, RoutedEventArgs e) => ModInstallService.OpenFolder(_folder);
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
@@ -66,6 +87,12 @@ public partial class SimpleGameView : UserControl
 
         try { _manifest = await Task.Run(PrepareManifest.RefreshAsync); } catch { }
         await RefreshStateAsync();
+
+        if (PendingFile is { } pending)
+        {
+            PendingFile = null;
+            await InstallPanel.InstallAsync(pending);
+        }
     }
 
     private void SetFolder(string? folder, string? version)
@@ -81,6 +108,9 @@ public partial class SimpleGameView : UserControl
         }
         VersionChip.Visibility = _folder != null && _version != null ? Visibility.Visible : Visibility.Collapsed;
         VersionText.Text = _version ?? "—";
+        BtnOpenFolder.IsEnabled = _folder != null;
+        InstallPanel.SetTarget(_folder == null ? null
+            : new GameTarget(_game, _folder, GameCatalog.Get(_game).DisplayName, GameEdition.Unknown));
         RefreshFolderText();
     }
 
@@ -144,6 +174,7 @@ public partial class SimpleGameView : UserControl
             {
                 PreparePhase.Downloading => "Dl_Downloading",
                 PreparePhase.Verifying => "Dl_Verifying",
+                PreparePhase.PreparingArchive => "Prep_CreatingModsRpf",
                 PreparePhase.Extracting => "Dl_Extracting",
                 PreparePhase.Installing => "Dl_Installing",
                 _ => "Common_Done"
@@ -198,7 +229,7 @@ public partial class SimpleGameView : UserControl
     {
         if (_folder == null) { DialogWindow.Show(Loc.Instance["Dl_NoGameFolder"], DialogKind.Warning); return; }
         string folder = _folder;
-        if (!await Task.Run(() => PrepareService.HasBackups(folder)))
+        if (!await Task.Run(() => PrepareService.HasBackups(folder) || InstalledModsStore.ForFolder(folder).Count > 0))
         {
             DialogWindow.Show(Loc.Instance["GtaV_Revert_Nothing"], DialogKind.Info);
             return;
@@ -208,9 +239,13 @@ public partial class SimpleGameView : UserControl
         ShowOverlay(true, "Dl_Restoring");
         try
         {
+            var errors = await Task.Run(() => ModUninstaller.UninstallAll(folder));
             await Task.Run(() => PrepareService.Revert(folder));
             ShowOverlay(false);
-            DialogWindow.Show(Loc.Instance["Common_Done"], DialogKind.Success);
+            DialogWindow.Show(errors.Count == 0 ? Loc.Instance["Common_Done"]
+                : Loc.Instance.Format("Mods_UninstallIncomplete", string.Join("\n", errors.Take(6).Select(x => "• " + x))),
+                errors.Count == 0 ? DialogKind.Success : DialogKind.Warning);
+            InstallPanel.Refresh();
         }
         catch (Exception ex)
         {

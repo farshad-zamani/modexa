@@ -1,0 +1,80 @@
+MODEXA - THIRD-PARTY NOTICES
+============================
+
+Modexa includes or builds on the following third-party work. Each remains under its own terms.
+
+
+1. GTA V archive cryptography (NG / AES) - Neodymium
+-----------------------------------------------------
+Modexa's GTA V archive decryption (src/Modexa.Core/Rpf/GtaKeys.cs) re-implements the algorithms
+published under this license (as distributed with CodeWalker):
+
+  Copyright(c) 2015 Neodymium
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in
+  all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+  THE SOFTWARE.
+
+
+2. CodeWalker - Copyright (c) 2017-2019 dexyfex
+-----------------------------------------------
+https://github.com/dexyfex/CodeWalker
+Reference for the RPF7 archive format and for converting archives to the OPEN format. Official
+Modexa builds embed CodeWalker's encrypted key bundle (magic.dat). The bundle is encrypted with
+the game's own key and can only be opened with an installed copy of GTA V.
+
+
+3. CodeWalkerProjects - crxhvrd
+-------------------------------
+https://github.com/crxhvrd/CodeWalkerProjects
+Its standalone OIV installer / uninstaller guided Modexa's OIV support (mods-folder handling,
+the .oivs format, reversing XML and text edits on uninstall). No source code is copied from it.
+
+
+4. OpenIV team - OpenIV.asi and its ASI loader
+----------------------------------------------
+https://openiv.com
+Official Modexa builds install OpenIV.asi (+ ASI loader) into GTA V Legacy so the game reads the
+"mods" folder. The OIV package format (assembly.xml, package version 2.x) is defined by OpenIV.
+
+
+5. SharpCompress - Copyright (c) 2014 Adam Hathcock - MIT License
+-----------------------------------------------------------------
+https://github.com/adamhathcock/sharpcompress
+Used to read the RAR / ZIP / 7z prerequisite packs.
+
+
+6. Fonts - SIL Open Font License 1.1
+------------------------------------
+Vazirmatn (c) Saber Rastikerdar - https://github.com/rastikerdar/vazirmatn
+Chakra Petch (c) Cadson Demak - https://github.com/google/fonts/tree/main/ofl/chakrapetch
+Rajdhani (c) Indian Type Foundry - https://github.com/google/fonts/tree/main/ofl/rajdhani
+The full OFL text is in src/Modexa.App/assets/fonts/OFL.txt.
+
+
+7. Prerequisite packs downloaded at runtime
+-------------------------------------------
+The "Prepare for mods" packs are downloaded by the user from WTMod.com (https://wtmod.com) and
+contain third-party tools under their own terms, including ScriptHookV (Alexander Blade),
+ScriptHookVDotNet, the Lua plugin, OpenRPF, Menyoo (MAFINS), the heap and packfile limit
+adjusters, community gameconfig.xml files, CLEO, Lenny's Mod Loader and Mod Loader
+(thelink2012). Modexa does not bundle them.
+
+
+Grand Theft Auto, Red Dead Redemption and related names are trademarks of Take-Two Interactive /
+Rockstar Games. Cyberpunk 2077 is a trademark of CD PROJEKT S.A. Modexa is not affiliated with or
+endorsed by any of them.

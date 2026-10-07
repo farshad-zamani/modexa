@@ -1,9 +1,10 @@
-﻿<UserControl x:Class="Modexa.App.Views.ModsView"
+<UserControl x:Class="Modexa.App.Views.ModsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:i18n="clr-namespace:Modexa.Core.I18n;assembly=Modexa.Core"
-             AllowDrop="True" Drop="Root_Drop" DragOver="Root_DragOver" DragLeave="Root_DragLeave">
+             xmlns:i18n="clr-namespace:Modexa.Core.I18n;assembly=Modexa.Core">
 
+    <!-- My Mods: every mod installed on every game, in one place. View-only; with Pro the list also
+         offers management (uninstall, open the game folder). Installing happens on each game's page. -->
     <Grid Background="Transparent">
         <ScrollViewer Style="{StaticResource PageScroll}">
             <StackPanel Style="{StaticResource PageContent}">
@@ -30,43 +31,28 @@
                     </StackPanel>
                 </Grid>
 
-                <!-- ===== Drop zone ===== -->
-                <Grid Margin="0,24,0,0" MinHeight="196">
-                    <Border x:Name="DropBg" CornerRadius="14" Background="{DynamicResource Bg.Panel}"/>
-                    <!-- dashed outline -->
-                    <Rectangle x:Name="DropOutline" RadiusX="14" RadiusY="14" StrokeThickness="1.5"
-                               StrokeDashArray="5 4" Stroke="{DynamicResource Stroke.Strong}"
-                               SnapsToDevicePixels="True" IsHitTestVisible="False"/>
-                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="24">
-                        <Border Width="56" Height="56" CornerRadius="28" HorizontalAlignment="Center"
-                                Background="{DynamicResource Accent.Soft}">
-                            <TextBlock Style="{StaticResource Icon}" FontSize="24"
-                                       Foreground="{DynamicResource Accent}" Text="&#xE896;"/>
+                <!-- ===== Summary ===== -->
+                <Border Style="{StaticResource Card}" Margin="0,24,0,0" Padding="20,16">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Width="44" Height="44" CornerRadius="12" Background="{DynamicResource Accent.Soft}"
+                                VerticalAlignment="Center">
+                            <TextBlock Style="{StaticResource Icon}" FontSize="18" Text="&#xE946;"
+                                       Foreground="{DynamicResource Accent}"/>
                         </Border>
-                        <TextBlock Margin="0,14,0,0" HorizontalAlignment="Center" TextAlignment="Center"
-                                   Style="{StaticResource Text.CardTitle}" FontSize="16"
-                                   Text="{Binding [Mods_Drop], Source={x:Static i18n:Loc.Instance}}"/>
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,16,0,0">
-                            <Button Style="{StaticResource PrimaryButton}" Click="Browse_Click">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Style="{StaticResource Icon}" FontSize="15" Text="&#xE8E5;"/>
-                                    <TextBlock Margin="10,0,0,0" VerticalAlignment="Center"
-                                               Text="{Binding [Mods_Browse], Source={x:Static i18n:Loc.Instance}}"/>
-                                </StackPanel>
-                            </Button>
-                            <Button Style="{StaticResource GhostButton}" Margin="10,0,0,0" Click="InstallAny_Click">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Style="{StaticResource Icon}" FontSize="15" Text="&#xE710;"/>
-                                    <TextBlock Margin="10,0,0,0" VerticalAlignment="Center"
-                                               Text="{Binding [Mods_InstallAny], Source={x:Static i18n:Loc.Instance}}"/>
-                                </StackPanel>
-                            </Button>
+                        <StackPanel Grid.Column="1" Margin="16,0,0,0" VerticalAlignment="Center">
+                            <TextBlock x:Name="SummaryText" Style="{StaticResource Text.CardTitle}"/>
+                            <TextBlock Style="{StaticResource Text.Desc}" Margin="0,4,0,0"
+                                       Text="{Binding [Mods_HowToInstall], Source={x:Static i18n:Loc.Instance}}"/>
                         </StackPanel>
-                    </StackPanel>
-                </Grid>
+                    </Grid>
+                </Border>
 
                 <!-- ===== Modexa Pro (upsell / status) ===== -->
-                <Border x:Name="ProCard" Style="{StaticResource Card}" Margin="0,16,0,0" Padding="20,18">
+                <Border x:Name="ProCard" Style="{StaticResource Card}" Margin="0,12,0,0" Padding="20,18">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
@@ -99,21 +85,11 @@
                     </Grid>
                 </Border>
 
-                <!-- ===== Installed ===== -->
-                <StackPanel Orientation="Horizontal" Margin="0,32,0,14">
-                    <TextBlock Style="{StaticResource Display.H2}" VerticalAlignment="Center"
-                               Text="{Binding [Mods_Installed], Source={x:Static i18n:Loc.Instance}}"/>
-                    <Border Style="{StaticResource Chip}" Margin="10,0,0,0" MinHeight="22" Padding="8,0"
-                            VerticalAlignment="Center">
-                        <TextBlock x:Name="CountText" FlowDirection="LeftToRight" NumberSubstitution.Substitution="European" Style="{StaticResource Label.Caps}" FontSize="12"
-                                   FontFamily="{DynamicResource Font.En.Hud}" VerticalAlignment="Center" Text="0"/>
-                    </Border>
-                </StackPanel>
-
-                <ItemsControl x:Name="InstalledList" Focusable="False"/>
+                <!-- ===== All installed mods, grouped by game ===== -->
+                <StackPanel x:Name="Groups" Margin="0,8,0,0"/>
 
                 <!-- Empty state -->
-                <Border x:Name="EmptyNote" Style="{StaticResource Card}" Padding="24" Visibility="Collapsed">
+                <Border x:Name="EmptyNote" Style="{StaticResource Card}" Padding="24" Margin="0,24,0,0" Visibility="Collapsed">
                     <StackPanel HorizontalAlignment="Center">
                         <TextBlock Style="{StaticResource Icon}" FontSize="22" Foreground="{DynamicResource Text.Muted}"
                                    Text="&#xE7B8;"/>
@@ -132,9 +108,9 @@
             <Border Style="{StaticResource Card}" Width="400" Padding="28,26"
                     HorizontalAlignment="Center" VerticalAlignment="Center">
                 <StackPanel>
-                    <TextBlock x:Name="OverlayText" Style="{StaticResource Display.H2}" HorizontalAlignment="Center"
+                    <TextBlock Style="{StaticResource Display.H2}" HorizontalAlignment="Center"
                                TextAlignment="Center" TextWrapping="Wrap"
-                               Text="{Binding [Dl_Installing], Source={x:Static i18n:Loc.Instance}}"/>
+                               Text="{Binding [Mods_Uninstalling], Source={x:Static i18n:Loc.Instance}}"/>
                     <ProgressBar x:Name="OverlayBar" Margin="0,20,0,4"/>
                 </StackPanel>
             </Border>

@@ -84,14 +84,6 @@ public static class LicenseStore
         }
     }
 
-    /// <summary>Imports the single-key license.dat written by earlier versions.</summary>
-    public static void MigrateLegacy(string? legacyKey)
-    {
-        if (string.IsNullOrWhiteSpace(legacyKey)) return;
-        if (All().Any(l => string.Equals(l.Key, legacyKey.Trim(), StringComparison.OrdinalIgnoreCase))) return;
-        Add(legacyKey, null);
-    }
-
     // ---- storage ----
 
     private static List<StoredLicense> Load()

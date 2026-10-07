@@ -20,6 +20,9 @@
     <EmbeddedResource Include="Assets\Modexa.asi" LogicalName="Modexa.Core.Assets.Modexa.asi" Condition="Exists('Assets\Modexa.asi')" />
     <!-- OpenIV mods-folder enabler for GTA V Legacy (third-party; placed directly, no download link). -->
     <EmbeddedResource Include="Assets\OpenIVFiles.zip" LogicalName="Modexa.Core.Assets.OpenIVFiles.zip" Condition="Exists('Assets\OpenIVFiles.zip')" />
+    <!-- GTA V archive key bundle (CodeWalker's magic.dat, MIT). Encrypted with the game's own AES key,
+         which is read from the user's GTA5.exe at runtime; useless without the game. -->
+    <EmbeddedResource Include="Assets\gtav-keys.dat" LogicalName="Modexa.Core.Assets.gtav-keys.dat" Condition="Exists('Assets\gtav-keys.dat')" />
   </ItemGroup>
 
 </Project>

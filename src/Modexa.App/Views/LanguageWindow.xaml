@@ -47,7 +47,7 @@
         </Style>
     </Window.Resources>
 
-    <Border Margin="16" CornerRadius="18" Background="{DynamicResource Bg.Panel}"
+    <Border Margin="16" CornerRadius="18" Background="{DynamicResource Bg.Dialog}"
             BorderBrush="{DynamicResource Stroke.Strong}" BorderThickness="1"
             MouseLeftButtonDown="Root_MouseDown">
         <Border.Effect>

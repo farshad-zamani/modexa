@@ -56,9 +56,20 @@
                                                TextTrimming="CharacterEllipsis"/>
                                 </Grid>
                             </Border>
-                            <Button Grid.Column="1" Style="{StaticResource GhostButton}" Margin="12,0,0,0"
-                                    Click="Browse_Click"
-                                    Content="{Binding [Common_Browse], Source={x:Static i18n:Loc.Instance}}"/>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="12,0,0,0">
+                                <Button x:Name="BtnOpenFolder" Style="{StaticResource GhostButton}" Margin="0,0,8,0"
+                                        Click="OpenFolder_Click" IsEnabled="False"
+                                        ToolTip="{Binding [Common_OpenFolder_Tip], Source={x:Static i18n:Loc.Instance}}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Style="{StaticResource Icon}" FontSize="15" Text="&#xE838;"/>
+                                        <TextBlock Margin="8,0,0,0" VerticalAlignment="Center"
+                                                   Text="{Binding [Common_OpenFolder], Source={x:Static i18n:Loc.Instance}}"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button Style="{StaticResource GhostButton}"
+                                        Click="Browse_Click"
+                                        Content="{Binding [Common_Browse], Source={x:Static i18n:Loc.Instance}}"/>
+                            </StackPanel>
                         </Grid>
                         <WrapPanel Margin="0,14,0,0">
                             <Border x:Name="VersionChip" Style="{StaticResource Chip}" Visibility="Collapsed">
@@ -85,6 +96,9 @@
                                 Title="{Binding [Simple_Step_Runner], Source={x:Static i18n:Loc.Instance}}"
                                 Description="{Binding [Simple_Step_Runner_Desc], Source={x:Static i18n:Loc.Instance}}"
                                 ActionText="{Binding [Common_Install], Source={x:Static i18n:Loc.Instance}}"/>
+
+                <!-- Licensed Modexa packages for this game + installed list -->
+                <local:ModInstallPanel x:Name="InstallPanel"/>
 
                 <!-- Maintenance -->
                 <TextBlock Style="{StaticResource Display.H2}" Margin="0,32,0,14"

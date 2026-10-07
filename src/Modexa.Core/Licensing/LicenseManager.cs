@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -38,14 +38,9 @@ public static class LicenseManager
         return c;
     }
 
-    private static string LicenseFilePath => AppPaths.LicenseFile;
     private static string StateFilePath => AppPaths.StateFile;
 
-    public static bool HasLocalLicense()
-    {
-        MigrateLegacyFile();
-        return LicenseStore.Any();
-    }
+    public static bool HasLocalLicense() => LicenseStore.Any();
 
     // ---- Format + tier ----------------------------------------------------------------------
 
@@ -126,21 +121,31 @@ public static class LicenseManager
         if (!SecurityHelper.ValidateIntegrity()) return LicenseTier.Free;
         if (!HasLocalLicense()) return LicenseTier.Free;
 
-        string? key = LoadLicense();
-        if (string.IsNullOrEmpty(key)) return LicenseTier.Free;
+        // Every stored key, best first: one refunded mod key must not demote an account whose
+        // other keys are still valid (that would also revoke all installed paid content).
+        var keys = LicenseStore.All()
+            .OrderByDescending(l => l.Tier).ThenByDescending(l => l.ActivatedUtc)
+            .Select(l => l.Key).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (keys.Count == 0) return LicenseTier.Free;
 
-        var verdict = await VerifyOnServerAsync(key).ConfigureAwait(false);
-        switch (verdict)
+        foreach (var key in keys)
         {
-            case ServerVerdict.Success:
+            var verdict = await VerifyOnServerAsync(key).ConfigureAwait(false);
+            if (verdict == ServerVerdict.Success)
+            {
                 var tier = TierFromKey(key);
                 UpdateStateOnOnlineSuccess(key, tier);
                 return tier;
-            case ServerVerdict.Rejected:
+            }
+            if (verdict == ServerVerdict.Unreachable)
+            {
+                // Offline (or our API key was rotated): fall back to the offline grace window.
+                foreach (var k in keys)
+                    if (IsWithinOfflineGrace(k, out var graceTier)) return graceTier;
                 return LicenseTier.Free;
-            default: // Unreachable -> offline grace
-                return IsWithinOfflineGrace(key, out var graceTier) ? graceTier : LicenseTier.Free;
+            }
         }
+        return LicenseTier.Free; // every key was rejected by the server
     }
 
     private static async Task<ServerVerdict> VerifyOnServerAsync(string licenseKey)
@@ -154,11 +159,18 @@ public static class LicenseManager
             if (!response.IsSuccessStatusCode)
             {
                 int code = (int)response.StatusCode;
-                return code >= 500 ? ServerVerdict.Unreachable : ServerVerdict.Rejected;
+                // 401 = the app's FSLM API key was rejected: that's about this build, not the
+                // user's license — never treat it as a revocation.
+                return code >= 500 || code == 401 || code == 429 ? ServerVerdict.Unreachable : ServerVerdict.Rejected;
             }
 
             var api = Deserialize(body);
-            return api?.IsSuccess == true ? ServerVerdict.Success : ServerVerdict.Rejected;
+            if (api == null) return ServerVerdict.Unreachable; // HTML error page / proxy: not an answer
+            if (api.IsSuccess) return ServerVerdict.Success;
+            if (api.Message?.Contains("Invalid API key", StringComparison.OrdinalIgnoreCase) == true
+                || api.Code?.Contains("invalid_api_key", StringComparison.OrdinalIgnoreCase) == true)
+                return ServerVerdict.Unreachable;
+            return ServerVerdict.Rejected;
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException)
         {
@@ -210,35 +222,12 @@ public static class LicenseManager
         => LicenseStore.Add(licenseKey, productId);
 
     /// <summary>The account's best key (highest tier) — used for verification and the engine download.</summary>
-    public static string? LoadLicense()
-    {
-        MigrateLegacyFile();
-        return LicenseStore.Best()?.Key;
-    }
+    public static string? LoadLicense() => LicenseStore.Best()?.Key;
 
     public static void ClearLicense()
     {
         LicenseStore.Clear();
-        try { if (File.Exists(LicenseFilePath)) File.Delete(LicenseFilePath); } catch { }
         try { if (File.Exists(StateFilePath)) File.Delete(StateFilePath); } catch { }
-    }
-
-    /// <summary>Earlier versions stored one key in license.dat; fold it into the multi-key store.</summary>
-    private static void MigrateLegacyFile()
-    {
-        if (!File.Exists(LicenseFilePath)) return;
-        try
-        {
-            var encrypted = File.ReadAllText(LicenseFilePath);
-            string key = Encoding.UTF8.GetString(ProtectedData.Unprotect(
-                Convert.FromBase64String(encrypted), null, DataProtectionScope.CurrentUser));
-            LicenseStore.MigrateLegacy(key);
-            File.Delete(LicenseFilePath);
-        }
-        catch
-        {
-            // Unreadable (other user/PC): leave it; the user simply re-enters the key.
-        }
     }
 
     // ---- Offline grace state ----------------------------------------------------------------

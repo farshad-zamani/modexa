@@ -51,8 +51,14 @@ public static class AppPaths
         }
     }
 
+    /// <summary>Points all user data at another folder (automated tests only).</summary>
+    public static void UseDataDirForTests(string dir)
+    {
+        Directory.CreateDirectory(dir);
+        _dataDir = dir;
+    }
+
     public static string SettingsFile => Path.Combine(DataDir, "settings.json");
-    public static string LicenseFile => Path.Combine(DataDir, "license.dat");
     public static string LicensesFile => Path.Combine(DataDir, "licenses.dat");
     public static string StateFile => Path.Combine(DataDir, "state.dat");
     public static string InstalledModsFile => Path.Combine(DataDir, "installed-mods.json");
@@ -66,48 +72,6 @@ public static class AppPaths
 
     /// <summary>Per-install backups of game files Modexa touches, so a revert can restore vanilla.</summary>
     public static string BackupsDir => Path.Combine(DataDir, "backups");
-
-    /// <summary>
-    /// One-time move of small user files from the old "next to the exe" layout. Large backup blobs
-    /// are left in place: the records that point at them use absolute paths and keep working.
-    /// </summary>
-    public static void MigrateLegacyData()
-    {
-        if (IsPortable) return;
-        try
-        {
-            string old = BaseDir;
-            if (string.Equals(Path.GetFullPath(old).TrimEnd('\\'), Path.GetFullPath(DataDir).TrimEnd('\\'),
-                    StringComparison.OrdinalIgnoreCase))
-                return;
-
-            foreach (var name in new[] { "settings.json", "license.dat", "state.dat", "installed-mods.json" })
-            {
-                string src = Path.Combine(old, name);
-                string dst = Path.Combine(DataDir, name);
-                if (File.Exists(src) && !File.Exists(dst))
-                {
-                    try { File.Copy(src, dst); File.Delete(src); } catch { }
-                }
-            }
-
-            // Revert logs (small JSON) so "Revert to vanilla" still finds earlier prepare runs.
-            string oldBackups = Path.Combine(old, "backups");
-            if (Directory.Exists(oldBackups))
-            {
-                EnsureDir(BackupsDir);
-                foreach (var log in Directory.GetFiles(oldBackups, "*.json"))
-                {
-                    string dst = Path.Combine(BackupsDir, Path.GetFileName(log));
-                    if (!File.Exists(dst)) { try { File.Copy(log, dst); } catch { } }
-                }
-            }
-        }
-        catch
-        {
-            // Migration is best-effort; never block startup.
-        }
-    }
 
     /// <summary>
     /// Atomic text write: write a temp file then replace, so a crash/power loss never leaves a
