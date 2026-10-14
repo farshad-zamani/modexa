@@ -26,7 +26,8 @@ public interface IModEngine
     /// Decrypts a .mxa with its server-issued content key and installs it (loose files, add-on pack
     /// + dlclist registration, or embedded OIV). Throws <see cref="ModInstallException"/>.
     /// </summary>
-    ModInstallRecord InstallPackage(string mxaPath, byte[] contentKey, string gameFolder, string game, string workDir);
+    ModInstallRecord InstallPackage(string mxaPath, byte[] contentKey, string gameFolder, string game, string workDir,
+        IProgress<EngineProgress>? progress = null);
 
     /// <summary>Reverts an install: restores originals, deletes created files, unregisters add-ons.</summary>
     void Uninstall(ModInstallRecord record);
@@ -44,8 +45,13 @@ public interface IProModEngine : IModEngine
 
 public static class ModEngineContract
 {
-    public const int ApiVersion = 1;
+    public const int ApiVersion = 2;
 }
+
+public enum EngineStage { Unpacking, Installing }
+
+/// <summary>Progress of a package install: the stage, bytes done of total, and what is being worked on.</summary>
+public readonly record struct EngineProgress(EngineStage Stage, long Done, long Total, string? Current = null);
 
 /// <summary>Install failure with a stable code the app maps to a localized message.</summary>
 public sealed class ModInstallException : Exception

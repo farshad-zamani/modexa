@@ -10,9 +10,9 @@
     <Authors>CloudTart</Authors>
     <Copyright>© CloudTart · Made for WTMod.com. All rights reserved.</Copyright>
     <!-- Single source of truth for the shipped version; update here for releases. -->
-    <Version>1.0.0.0</Version>
-    <FileVersion>1.0.0.0</FileVersion>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <Version>1.2.0.0</Version>
+    <FileVersion>1.2.0.0</FileVersion>
+    <AssemblyVersion>1.2.0.0</AssemblyVersion>
   </PropertyGroup>
   <!-- Release builds ship no symbol files (nothing that helps decompilers line code up). -->
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">

@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -38,9 +38,21 @@ public sealed class BundleMap
 /// </summary>
 public sealed class GameConfigSpec
 {
+    /// <summary>A fixed variants folder (used when <see cref="VersionsRoot"/> is not set).</summary>
     [JsonPropertyName("folder")] public string Folder { get; set; } = "";
+
+    /// <summary>
+    /// Folder holding one "Gta Config vNN for v 1.0.BUILD" folder per game build (old ones may sit
+    /// in a sub-folder such as "Old Versions"). The folder made for the game's build is picked
+    /// automatically — see <see cref="GameConfigVersions"/>.
+    /// </summary>
+    [JsonPropertyName("versionsRoot")] public string? VersionsRoot { get; set; }
+
+    /// <summary>Variants whose path contains one of these are never offered (e.g. "For Less Mods").</summary>
+    [JsonPropertyName("exclude")] public List<string> Exclude { get; set; } = new();
+
     [JsonPropertyName("default")] public string? Default { get; set; }
-    /// <summary>Game build the configs were made for (a different build gets a warning, not a block).</summary>
+    /// <summary>Game build the fixed <see cref="Folder"/> was made for (a different build gets a warning, not a block).</summary>
     [JsonPropertyName("forBuild")] public int? ForBuild { get; set; }
 }
 
@@ -102,7 +114,7 @@ public sealed class StepEntry
 public sealed class PrepareManifest
 {
     /// <summary>Manifests older than this layout are ignored in favour of the built-in default.</summary>
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     [JsonPropertyName("version")] public int Version { get; set; } = CurrentVersion;
     [JsonPropertyName("steps")] public List<StepEntry> Steps { get; set; } = new();
@@ -172,11 +184,13 @@ public sealed class PrepareManifest
                     {
                         Url = GameConfigUrl, Password = WtModPassword, Edition = "Legacy",
                         Maps = { new BundleMap { From = GameConfigRoot + "GTA V Legacy/1/", To = "" } }, // heap + packfile adjusters
+                        // "2/" holds the newest config at the top and the older ones in "Old Versions/";
+                        // the one made for the game's build is picked. "For Less Mods" is never offered.
                         GameConfig = new GameConfigSpec
                         {
-                            Folder = GameConfigRoot + "GTA V Legacy/2/Gta Config v37 for v 1.0.3889",
-                            Default = "For More Mods/Stock Traffic (Means Gta base)",
-                            ForBuild = 3889
+                            VersionsRoot = GameConfigRoot + "GTA V Legacy/2/",
+                            Exclude = { "For Less Mods" },
+                            Default = "Stock Traffic"
                         }
                     },
                     new BundleEntry
@@ -184,9 +198,9 @@ public sealed class PrepareManifest
                         Url = GameConfigUrl, Password = WtModPassword, Edition = "Enhanced",
                         GameConfig = new GameConfigSpec
                         {
-                            Folder = GameConfigRoot + "GTA V Enhanced/Gta Config Enhanced v3 for v 1.0.1158",
-                            Default = "Stock Traffic (Means Gta base)",
-                            ForBuild = 1158
+                            VersionsRoot = GameConfigRoot + "GTA V Enhanced/",
+                            Exclude = { "For Less Mods" },
+                            Default = "Stock Traffic"
                         }
                     }
                 }

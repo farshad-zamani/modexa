@@ -10,9 +10,10 @@ namespace Modexa.App.Views;
 
 /// <summary>
 /// Animated tier ambience behind the pages: gold veins with beads of light gliding back and forth
-/// along them (subtle on Plus, rich on Pro), plus an aurora and rising embers on Pro. Animations are
-/// capped at 30 fps, paused while the window is minimized, and disabled when Windows "animation
-/// effects" are turned off (the static veins still show).
+/// along them (subtle on Plus, rich on Pro), plus an aurora and rising embers on Pro. A licensed
+/// user who picks the Free look keeps the Plus-style threads and lights, in the Free cyan. Plain Free
+/// shows nothing. Animations are capped at 30 fps, paused while the window is minimized, and
+/// disabled when Windows "animation effects" are turned off (the static veins still show).
 /// </summary>
 public partial class TierAmbience : UserControl
 {
@@ -56,8 +57,10 @@ public partial class TierAmbience : UserControl
     private readonly List<(FrameworkElement bead, TranslateTransform tx)> _beads = new();
     private readonly List<(Ellipse dot, TranslateTransform tx)> _embers = new();
     private readonly Random _rng = new(7);
+    private Color _beadCore = Color.FromRgb(0xFF, 0xF8, 0xE1);
     private readonly DispatcherTimer _resizeDebounce;
     private LicenseTier _tier = LicenseTier.Free;
+    private bool _active;
     private Window? _host;
 
     public TierAmbience()
@@ -80,7 +83,7 @@ public partial class TierAmbience : UserControl
         SizeChanged += (_, _) =>
         {
             Layout();
-            if (_tier != LicenseTier.Free) { _resizeDebounce.Stop(); _resizeDebounce.Start(); }
+            if (_active) { _resizeDebounce.Stop(); _resizeDebounce.Start(); }
         };
         Loaded += (_, _) =>
         {
@@ -99,17 +102,23 @@ public partial class TierAmbience : UserControl
 
     private static bool AnimationsAllowed => SystemParameters.ClientAreaAnimation;
 
-    public void SetTier(LicenseTier tier)
+    /// <param name="tier">The active look.</param>
+    /// <param name="licensed">A license is active (the Free look then still gets the threads, in cyan).</param>
+    public void SetTier(LicenseTier tier, bool licensed = false)
     {
         _tier = tier;
+        _active = tier != LicenseTier.Free || licensed;
         StopAll(_ambient);
         StopAll(_beadRuns);
 
-        Root.Visibility = tier == LicenseTier.Free ? Visibility.Collapsed : Visibility.Visible;
-        if (tier == LicenseTier.Free) return;
+        Root.Visibility = _active ? Visibility.Visible : Visibility.Collapsed;
+        if (!_active) return;
 
         bool pro = tier == LicenseTier.Pro;
-        Color gold = ThemeColor("C.Glow", Color.FromRgb(0xDB, 0xA9, 0x4C));
+        bool cyan = tier == LicenseTier.Free;
+        // C.Glow is the look's own glow colour: gold on Plus / Pro, cyan on Free.
+        Color gold = ThemeColor("C.Glow", cyan ? Color.FromRgb(0x35, 0xD0, 0xE6) : Color.FromRgb(0xDB, 0xA9, 0x4C));
+        _beadCore = cyan ? Color.FromRgb(0xE4, 0xFC, 0xFF) : Color.FromRgb(0xFF, 0xF8, 0xE1);
         ApplyVeinBrushes(gold, pro);
 
         VeinLayer.Opacity = pro ? 0.55 : 0.34;
@@ -190,7 +199,7 @@ public partial class TierAmbience : UserControl
             grid.Children.Add(new Ellipse { Fill = haloBrush });
 
             var coreBrush = new RadialGradientBrush();
-            coreBrush.GradientStops.Add(new GradientStop(Color.FromRgb(0xFF, 0xF8, 0xE1), 0));
+            coreBrush.GradientStops.Add(new GradientStop(_beadCore, 0));
             coreBrush.GradientStops.Add(new GradientStop(gold, 0.6));
             coreBrush.GradientStops.Add(new GradientStop(Color.FromArgb(0, gold.R, gold.G, gold.B), 1));
             coreBrush.Freeze();
@@ -209,7 +218,7 @@ public partial class TierAmbience : UserControl
     private void RestartBeads()
     {
         StopAll(_beadRuns);
-        if (_tier == LicenseTier.Free || !AnimationsAllowed || ActualWidth <= 0 || ActualHeight <= 0) return;
+        if (!_active || !AnimationsAllowed || ActualWidth <= 0 || ActualHeight <= 0) return;
 
         for (int i = 0; i < _beads.Count; i++)
         {

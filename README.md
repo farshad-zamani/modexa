@@ -32,14 +32,15 @@ Windows 10/11 x64. The installer is not code-signed yet, so Windows SmartScreen 
 
 ### Prepare a game for mods
 Modexa detects the game folder, the edition (GTA V **Legacy** or **Enhanced**) and the exact
-version/build, then downloads and installs the matching prerequisites, showing the progress:
+version/build, then downloads and installs the matching prerequisites, showing the progress. A pack is
+downloaded once and only again when it changes on the server:
 
 | Game | What gets installed |
 |---|---|
-| GTA V Legacy / Enhanced | Mod Runner (ASI loader, ScriptHookV, ScriptHookVDotNet, Lua, OpenIV.asi / OpenRPF), GameConfig for add-on mods with your choice of traffic (+ heap and packfile adjusters on Legacy), Menyoo trainer |
+| GTA V Legacy / Enhanced | Mod Runner (ASI loader, ScriptHookV, ScriptHookVDotNet, Lua, OpenIV.asi / OpenRPF), GameConfig for add-on mods picked for your exact build (normal traffic by default, busier or quieter streets as an advanced option; + heap and packfile adjusters on Legacy), Menyoo trainer |
 | GTA San Andreas, GTA IV, Red Dead Redemption, Red Dead Redemption 2, Cyberpunk 2077 | The Mod Runner pack made for your game version |
 
-Every file Modexa overwrites is backed up first; **Revert** restores the vanilla game.
+Each installed step appears in the game's **Installed** list (and in My Mods) with its own **Uninstall** button; the originals it replaced are restored exactly. **Revert** removes everything Modexa did in one go.
 
 ### Editable `update.rpf`, created automatically
 `gameconfig.xml`, add-on mods and most OIV packages need an editable copy of the game's
@@ -50,7 +51,15 @@ files are never modified.
 
 ### Install OpenIV packages (`.oiv`, `.oivs`) — free
 On a GTA V page, under **Install mods**, drag an `.oiv` onto the drop zone or choose the file.
-Modexa shows the package name, version and author, asks for confirmation, and installs it:
+Modexa shows the package's icon, name, version, author and the disk space it needs, asks for
+confirmation, and installs it with a single progress bar (copying game archives, then installing
+files), the time left and the file being worked on:
+
+- the package is read straight from the `.oiv` — nothing is extracted first, so even multi-GB packages
+  start instantly;
+- a mod split into parts (`Package.1.oiv`, `Package.2.oiv`…) can be chosen or dropped together: the
+  parts install in order and are listed separately; each part can be removed on its own, or all parts
+  at once. Parts are told apart by the package id, not by their (identical) name;
 
 - files for `update\`, `x64\` or any `.rpf` always go to the `mods` folder (never into the original
   game files);
@@ -69,18 +78,25 @@ reverse:
 - a shared file such as `dlclist.xml` only loses *this* mod's edits — other mods' entries stay;
 - if a mod installed later replaced the same file, it inherits the original, so removing mods in
   **any order** always ends at the true original;
+- archive copies in `mods\` that were made for the mod and that nothing else uses are deleted as a
+  whole, giving the space back; the game reads its own originals again. A copy someone changed with
+  another tool (e.g. OpenIV) is never deleted silently — Modexa offers it for clean-up instead;
+- for copies made from the game, no backup copies are stored: the original files are read back from
+  the game's own (encrypted) archives when needed;
 - folders the mod created are removed when empty; if the game is running (files locked), Modexa says
   so, and pressing Uninstall again finishes the job.
 
-The **Installed mods** list on each game page shows what is installed there, each with its own
-Uninstall button. **My Mods** shows everything installed on every game in one place.
+The **Installed mods** list on each game page shows what is installed there — mods and prepare steps —
+each with its own Uninstall button. **My Mods** shows everything installed on every game in one place,
+with the same Uninstall buttons.
 
 ### Also
 - **Open folder** next to every game path opens it in File Explorer.
 - Drag a mod file onto the window or double-click an `.mxa` in Explorer: Modexa opens the right
   game page and installs it there.
 - English and Persian (Vazirmatn font), dark interface; Plus and Pro add gold themes with animated
-  gold threads.
+  gold threads. Licensed users can pick their theme (Free cyan, Plus gold, Pro black and gold) from the
+  title bar.
 
 ## Editions
 
@@ -93,8 +109,7 @@ Uninstall button. **My Mods** shows everything installed on every game in one pl
 | Licensed Modexa mods (`.mxa`) from [WTMod.com](https://wtmod.com) | — | ✅ | ✅ |
 | Clean launch (safe for GTA Online) and one-click revert | — | ✅ | ✅ |
 | Install any other mod: add-on `.rpf`, `.zip`, folders | — | — | ✅ |
-| Manage all mods from My Mods | — | — | ✅ |
-| Theme | Dark / cyan | Dark + gold | Black + gold glow |
+| Theme | Dark / cyan | Choose: cyan or gold | Choose: cyan, gold or black + gold |
 
 The download here is the **Free** edition. A license upgrades the *same* installation to Plus or Pro,
 and updates always come through this build, so a license keeps working after updating.

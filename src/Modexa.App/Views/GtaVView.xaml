@@ -131,6 +131,17 @@
                                 Description="{Binding [GtaV_Step_Menu_Desc], Source={x:Static i18n:Loc.Instance}}"
                                 ActionText="{Binding [Common_Install], Source={x:Static i18n:Loc.Instance}}"/>
 
+                <!-- Products from the client's shop -->
+                <Grid Margin="0,16,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="14"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <local:PromoBanner x:Name="PromoBackup"/>
+                    <local:PromoBanner x:Name="PromoMenyoo" Grid.Column="2"/>
+                </Grid>
+
                 <!-- ===== Install mods (OIV for everyone, licensed .mxa, Pro: any mod) + installed list ===== -->
                 <local:ModInstallPanel x:Name="InstallPanel"/>
 
@@ -198,21 +209,7 @@
             </StackPanel>
         </ScrollViewer>
 
-        <!-- ===== Progress overlay ===== -->
-        <Grid x:Name="Overlay" Background="{DynamicResource Scrim}" Visibility="Collapsed">
-            <Border Style="{StaticResource Card}" Width="420" Padding="28,26"
-                    HorizontalAlignment="Center" VerticalAlignment="Center">
-                <StackPanel>
-                    <TextBlock x:Name="OverlayPhase" Style="{StaticResource Display.H2}" HorizontalAlignment="Center"/>
-                    <ProgressBar x:Name="OverlayBar" Margin="0,20,0,0" Minimum="0" Maximum="100"/>
-                    <TextBlock x:Name="OverlayPercent" FlowDirection="LeftToRight" NumberSubstitution.Substitution="European" Style="{StaticResource Hud.Value}" Margin="0,10,0,0"
-                               FontFamily="{DynamicResource Font.En.Hud}"
-                               Foreground="{DynamicResource Text.Secondary}" HorizontalAlignment="Center"/>
-                    <Button x:Name="OverlayCancel" Style="{StaticResource GhostButton}" Margin="0,20,0,0"
-                            HorizontalAlignment="Center" MinWidth="112" Click="Cancel_Click"
-                            Content="{Binding [Common_Cancel], Source={x:Static i18n:Loc.Instance}}"/>
-                </StackPanel>
-            </Border>
-        </Grid>
+        <!-- ===== Progress card ===== -->
+        <local:BusyOverlay x:Name="Busy" CancelRequested="Cancel_Click"/>
     </Grid>
 </UserControl>

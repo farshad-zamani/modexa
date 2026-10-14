@@ -50,8 +50,8 @@ ChangesAssociations=yes
 CloseApplications=yes
 RestartApplications=no
 ShowLanguageDialog=auto
-#if FileExists("..\..\src\Modexa.App\assets\modexa.ico")
-SetupIconFile=..\..\src\Modexa.App\assets\modexa.ico
+#if FileExists("..\..\src\Modexa.App\assets\icon\modexa.ico")
+SetupIconFile=..\..\src\Modexa.App\assets\icon\modexa.ico
 #endif
 
 [Languages]

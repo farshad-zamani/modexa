@@ -20,6 +20,17 @@ public static class DlcList
     public static bool Register(string gameFolder, string dlcName, IProgress<int>? progress = null, CancellationToken ct = default)
         => Edit(gameFolder, xml => AddEntry(xml, dlcName), progress, ct);
 
+    /// <summary>Adds several packs in one edit of update.rpf (an add-on pack of many DLCs). True if any was new.</summary>
+    public static bool RegisterMany(string gameFolder, IReadOnlyCollection<string> dlcNames, IProgress<int>? progress = null, CancellationToken ct = default)
+        => dlcNames.Count > 0 && Edit(gameFolder, xml => dlcNames.Aggregate(xml, AddEntry), progress, ct);
+
+    /// <summary>Removes several packs in one edit. Does nothing when there is no editable update.rpf.</summary>
+    public static bool UnregisterMany(string gameFolder, IReadOnlyCollection<string> dlcNames)
+    {
+        if (dlcNames.Count == 0 || !File.Exists(ModsArchives.ModsPath(gameFolder, ModsArchives.UpdateRpf))) return false;
+        return Edit(gameFolder, xml => dlcNames.Aggregate(xml, RemoveEntry), null, default);
+    }
+
     /// <summary>Removes <c>dlcpacks:/name/</c>. Does nothing when there is no editable update.rpf.</summary>
     public static bool Unregister(string gameFolder, string dlcName)
     {

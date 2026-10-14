@@ -24,8 +24,8 @@ public partial class GtaVView : UserControl, IInstallHost
     private CancellationTokenSource? _cts;
     private string? _folderKey = "Common_Detecting";
 
-    /// <summary>A mod file to install once the game folder is known (opened from Explorer / dropped on the window).</summary>
-    public string? PendingFile { get; set; }
+    /// <summary>Mod files to install once the game folder is known (opened from Explorer / dropped on the window).</summary>
+    public IReadOnlyList<string>? PendingFiles { get; set; }
 
     public GameEdition Edition => _edition;
 
@@ -42,23 +42,29 @@ public partial class GtaVView : UserControl, IInstallHost
         ThemeService.TierChanged += ApplyTier;
         ApplyTier(ThemeService.CurrentTier);
         InstallPanel.Host = this;
+        InstallPanel.Changed += () => _ = RefreshPrepareStateAsync();
+        // Each edition describes only what it installs (OpenRPF is Enhanced only; the limit adjusters Legacy only).
+        if (_edition == GameEdition.Enhanced)
+        {
+            StepModRunner.Bind(StepCard.DescriptionProperty, "GtaV_Step_ModRunner_Desc_Enhanced");
+            StepGameConfig.Bind(StepCard.DescriptionProperty, "GtaV_Step_GameConfig_Desc_Enhanced");
+        }
+        // Products from the client's shop. Backup Manager is a GTA V Legacy tool: on the Enhanced page
+        // its pitch speaks to players who also have Legacy.
+        PromoBackup.Set("assets/promo/backup-manager.jpg", "Promo_Bm_Title",
+            _edition == GameEdition.Enhanced ? "Promo_Bm_Text_Enhanced" : "Promo_Bm_Text", Modexa.Core.Remote.Endpoints.BackupManagerPro);
+        PromoMenyoo.Set("assets/promo/menyoofa.jpg", "Promo_Menyoo_Title", "Promo_Menyoo_Text", Modexa.Core.Remote.Endpoints.MenyooFa);
         RefreshFolderText();
     }
 
-    /// <summary>Installs a mod file into this page's game (used when a file is dropped on the window).</summary>
-    public Task InstallFileAsync(string path) => InstallPanel.InstallAsync(path);
+    /// <summary>Installs mod files into this page's game (used when files are dropped on the window).</summary>
+    public Task InstallFilesAsync(IReadOnlyList<string> paths) => InstallPanel.InstallAsync(paths);
 
     // ---- IInstallHost (the page overlay shows install / uninstall progress) ----
 
-    public void ShowBusy(string phaseKey, int? percent)
-    {
-        Overlay.Visibility = Visibility.Visible;
-        OverlayCancel.Visibility = Visibility.Collapsed;
-        OverlayPhase.Bind(TextBlock.TextProperty, phaseKey);
-        SetPercent(percent);
-    }
+    public void ShowBusy(InstallPhase phase) => Busy.Update(phase);
 
-    public void HideBusy() => ShowOverlay(false);
+    public void HideBusy() => Busy.Hide();
 
     private void OpenFolder_Click(object sender, RoutedEventArgs e) => ModInstallService.OpenFolder(_install?.Folder);
 
@@ -120,9 +126,9 @@ public partial class GtaVView : UserControl, IInstallHost
             RefreshFolderText();
         }
 
-        if (PendingFile is { } pending)
+        if (PendingFiles is { Count: > 0 } pending)
         {
-            PendingFile = null;
+            PendingFiles = null;
             await InstallPanel.InstallAsync(pending);
         }
 
@@ -223,21 +229,12 @@ public partial class GtaVView : UserControl, IInstallHost
         if (_cts != null) return; // a step is already running
 
         _cts = new CancellationTokenSource();
-        ShowOverlay(true, "Dl_Downloading", cancellable: true);
+        Busy.Show("Dl_Downloading", cancellable: true);
 
-        var progress = new Progress<PrepareProgress>(p =>
-        {
-            OverlayPhase.Bind(TextBlock.TextProperty, p.Phase switch
-            {
-                PreparePhase.Downloading => "Dl_Downloading",
-                PreparePhase.Verifying => "Dl_Verifying",
-                PreparePhase.PreparingArchive => "Prep_CreatingModsRpf",
-                PreparePhase.Extracting => "Dl_Extracting",
-                PreparePhase.Installing => "Dl_Installing",
-                _ => "Common_Done"
-            });
-            SetPercent(p.Percent);
-        });
+        // Download -> (editable update.rpf) -> install: say which step of how many is running.
+        string folder = _install.Folder;
+        bool copyStep = step == PrepareStep.GameConfig && !await Task.Run(() => Modexa.Core.Rpf.ModsArchives.IsReady(folder));
+        var progress = new Progress<PrepareProgress>(p => Busy.Update(PrepareBusy.Phase(p, copyStep)));
 
         try
         {
@@ -247,29 +244,28 @@ public partial class GtaVView : UserControl, IInstallHost
                 versionToken: null, progress, _cts.Token,
                 (variants, def) => Task.FromResult(ChooseGameConfig(variants, def)));
 
-            ShowOverlay(false);
+            Busy.Hide();
             ShowResult(step, result, build);
-            await RefreshPrepareStateAsync();
             await UpdateCleanLaunchStateAsync();
         }
         catch (OperationCanceledException)
         {
-            ShowOverlay(false);
+            Busy.Hide();
         }
         catch (PrepareNotConfiguredException)
         {
-            ShowOverlay(false);
+            Busy.Hide();
             DialogWindow.Show(Loc.Instance["Prepare_NotConfigured"], DialogKind.Info);
         }
         catch (PrepareLayoutException ex)
         {
-            ShowOverlay(false);
+            Busy.Hide();
             Modexa.Core.Diagnostics.Log.Error("Prepare layout", ex);
             DialogWindow.Show(Loc.Instance["Prepare_LayoutChanged"], DialogKind.Error);
         }
         catch (Exception ex)
         {
-            ShowOverlay(false);
+            Busy.Hide();
             Modexa.Core.Diagnostics.Log.Error("Prepare", ex);
             DialogWindow.Show($"{Loc.Instance["Dl_Failed"]}\n\n{ex.Message}", DialogKind.Error);
         }
@@ -277,14 +273,20 @@ public partial class GtaVView : UserControl, IInstallHost
         {
             _cts?.Dispose();
             _cts = null;
+            // The step is now in the installed list (with its own uninstall button).
+            await RefreshPrepareStateAsync();
+            InstallPanel.Refresh();
         }
     }
 
     /// <summary>Lets the user pick the gameconfig variant (traffic density / mod amount).</summary>
     private string? ChooseGameConfig(IReadOnlyList<string> variants, string? def)
     {
+        // Default: the game's normal traffic; other densities only behind the "advanced" switch.
         var items = GameConfigLabels.Order(variants).Select(v => (v, GameConfigLabels.Label(v))).ToList();
-        return DialogWindow.ChooseFromList(Loc.Instance["Prep_Choose_Title"], Loc.Instance["Prep_Choose_Message"], items, def);
+        string? normal = variants.FirstOrDefault(GameConfigLabels.IsStock) ?? def;
+        return DialogWindow.ChooseFromList(Loc.Instance["Prep_Choose_Title"], Loc.Instance["Prep_Choose_Message"], items, normal,
+            advancedLabel: Loc.Instance["Prep_Advanced"]);
     }
 
     private void ShowResult(PrepareStep step, PrepareResult r, int build)
@@ -316,7 +318,7 @@ public partial class GtaVView : UserControl, IInstallHost
                 lines.Add(Loc.Instance[step == PrepareStep.ModRunner ? "Prep_RunnerDone" : "Prep_MenuDone"]);
                 break;
         }
-        if (r.BuildMismatch && r.ConfigBuild is { } cfg)
+        if (r.BuildMismatch && r.ConfigFor is { } cfg)
             lines.Add(Loc.Instance.Format("Prep_BuildMismatch", cfg, build));
         DialogWindow.Show(string.Join("\n\n", lines), kind);
     }
@@ -326,11 +328,11 @@ public partial class GtaVView : UserControl, IInstallHost
     {
         if (_install == null) return;
         string folder = _install.Folder;
-        var (state, rpf) = await Task.Run(() => (PrepareState.Load(folder), PrepareService.ModsUpdateRpfState(folder)));
+        var (state, rpf) = await Task.Run(() => (PrepareService.InstalledSteps(folder), PrepareService.ModsUpdateRpfState(folder)));
 
         StepModRunner.SetDone(state.ContainsKey(PrepareStep.ModRunner));
         StepGameConfig.SetDone(state.ContainsKey(PrepareStep.GameConfig),
-            state.TryGetValue(PrepareStep.GameConfig, out var gc) && gc.Variant != null ? GameConfigLabels.Label(gc.Variant) : null);
+            state.TryGetValue(PrepareStep.GameConfig, out var gc) && gc.Version != null ? GameConfigLabels.Label(gc.Version) : null);
         StepMenu.SetDone(state.ContainsKey(PrepareStep.Menu));
 
         bool ready = rpf == GameConfigOutcome.Applied;
@@ -343,33 +345,6 @@ public partial class GtaVView : UserControl, IInstallHost
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e) => _cts?.Cancel();
-
-    private void ShowOverlay(bool show, string phaseKey = "Dl_Downloading", bool cancellable = false)
-    {
-        Overlay.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        // Never leave an indeterminate animation ticking behind a hidden overlay.
-        OverlayBar.IsIndeterminate = false;
-        if (!show) return;
-
-        OverlayPhase.Bind(TextBlock.TextProperty, phaseKey);
-        OverlayCancel.Visibility = cancellable ? Visibility.Visible : Visibility.Collapsed;
-        SetPercent(cancellable ? 0 : null);
-    }
-
-    private void SetPercent(int? pct)
-    {
-        if (pct is { } v)
-        {
-            OverlayBar.IsIndeterminate = false;
-            OverlayBar.Value = v;
-            OverlayPercent.Text = v + "%";
-        }
-        else
-        {
-            OverlayBar.IsIndeterminate = true;
-            OverlayPercent.Text = "";
-        }
-    }
 
     // ---- Revert / clean launch -----------------------------------------------------------------
 
@@ -396,13 +371,15 @@ public partial class GtaVView : UserControl, IInstallHost
             return;
         }
 
-        ShowOverlay(true, "Dl_Restoring");
+        Busy.Show("Dl_Restoring");
         try
         {
-            // Mods first (newest first, each exactly as installed), then the prepare files.
-            var errors = await Task.Run(() => ModUninstaller.UninstallAll(folder));
+            // Every installed item (mods and prepare steps, newest first, each exactly as installed),
+            // then whatever is left of Modexa in the folder.
+            var step = new Progress<string>(s => Busy.Update(new InstallPhase("Dl_Restoring", null, s.Replace('/', '\\'))));
+            var errors = await Task.Run(() => ModUninstaller.UninstallAll(folder, step));
             await Task.Run(() => PrepareService.Revert(folder));
-            ShowOverlay(false);
+            Busy.Hide();
             DialogWindow.Show(errors.Count == 0 ? Loc.Instance["Common_Done"]
                 : Loc.Instance.Format("Mods_UninstallIncomplete", string.Join("\n", errors.Take(6).Select(x => "• " + x))),
                 errors.Count == 0 ? DialogKind.Success : DialogKind.Warning);
@@ -411,7 +388,7 @@ public partial class GtaVView : UserControl, IInstallHost
         }
         catch (Exception ex)
         {
-            ShowOverlay(false);
+            Busy.Hide();
             DialogWindow.Show($"{Loc.Instance["Dl_Failed"]}\n\n{ex.Message}", DialogKind.Error);
         }
         await UpdateCleanLaunchStateAsync();

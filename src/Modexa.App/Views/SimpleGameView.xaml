@@ -123,21 +123,7 @@
             </StackPanel>
         </ScrollViewer>
 
-        <!-- Progress overlay -->
-        <Grid x:Name="Overlay" Background="{DynamicResource Scrim}" Visibility="Collapsed">
-            <Border Style="{StaticResource Card}" Width="420" Padding="28,26"
-                    HorizontalAlignment="Center" VerticalAlignment="Center">
-                <StackPanel>
-                    <TextBlock x:Name="OverlayPhase" Style="{StaticResource Display.H2}" HorizontalAlignment="Center"/>
-                    <ProgressBar x:Name="OverlayBar" Margin="0,20,0,0" Minimum="0" Maximum="100"/>
-                    <TextBlock x:Name="OverlayPercent" Style="{StaticResource Hud.Value}" Margin="0,10,0,0"
-                               FontFamily="{DynamicResource Font.En.Hud}"
-                               Foreground="{DynamicResource Text.Secondary}" HorizontalAlignment="Center"/>
-                    <Button x:Name="OverlayCancel" Style="{StaticResource GhostButton}" Margin="0,20,0,0"
-                            HorizontalAlignment="Center" MinWidth="112" Click="Cancel_Click"
-                            Content="{Binding [Common_Cancel], Source={x:Static i18n:Loc.Instance}}"/>
-                </StackPanel>
-            </Border>
-        </Grid>
+        <!-- Progress card -->
+        <local:BusyOverlay x:Name="Busy" CancelRequested="Cancel_Click"/>
     </Grid>
 </UserControl>

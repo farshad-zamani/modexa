@@ -14,7 +14,7 @@ public static class CleanLaunchService
         "dinput8.dll", "xinput1_4.dll", "dsound.dll", "d3d11.dll", "dxgi.dll", "version.dll"
     };
 
-    private const string DisabledSuffix = ".modexa-off";
+    public const string DisabledSuffix = ".modexa-off";
 
     public static bool IsCleanLaunchEnabled(string gameFolder)
     {

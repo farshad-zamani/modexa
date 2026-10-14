@@ -42,9 +42,17 @@ public static class ModBackups
         catch { return false; }
     }
 
-    public static string ReadText(string path)
+    /// <summary>True when original bytes have the same text content as <paramref name="text"/> (whitespace aside).</summary>
+    public static bool SameText(byte[] original, string text)
     {
-        byte[] b = File.ReadAllBytes(path);
+        try { return EditJournal.Normalize(Decode(original)) == EditJournal.Normalize(text); }
+        catch { return false; }
+    }
+
+    public static string ReadText(string path) => Decode(File.ReadAllBytes(path));
+
+    private static string Decode(byte[] b)
+    {
         int skip = b.Length >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF ? 3 : 0;
         return Encoding.UTF8.GetString(b, skip, b.Length - skip);
     }

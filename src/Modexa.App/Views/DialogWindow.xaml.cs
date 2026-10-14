@@ -104,7 +104,12 @@ public partial class DialogWindow : Window
     /// Pick one item from a list (e.g. a gameconfig variant). Returns the chosen item's value, or null
     /// when cancelled. <paramref name="items"/> are (value, label) pairs.
     /// </summary>
-    public static string? ChooseFromList(string title, string message, IReadOnlyList<(string Value, string Label)> items, string? selected)
+    /// <param name="advancedLabel">
+    /// When set, a switch with this label guards the list: off, <paramref name="selected"/> is used and
+    /// the list is locked; on, any item can be picked.
+    /// </param>
+    public static string? ChooseFromList(string title, string message, IReadOnlyList<(string Value, string Label)> items, string? selected,
+        string? advancedLabel = null)
     {
         var dlg = new DialogWindow(message, DialogKind.Question, title, confirm: true, danger: false);
         dlg.IconGlyph.Text = "";
@@ -112,26 +117,89 @@ public partial class DialogWindow : Window
         dlg.BtnSecondary.Content = Loc.Instance["Common_Cancel"];
         foreach (var (value, label) in items)
             dlg.ChoiceBox.Items.Add(new System.Windows.Controls.ComboBoxItem { Content = label, Tag = value });
-        dlg.ChoiceBox.SelectedIndex = Math.Max(0, items.ToList().FindIndex(i => i.Value == selected));
+        int def = Math.Max(0, items.ToList().FindIndex(i => i.Value == selected));
+        dlg.ChoiceBox.SelectedIndex = def;
         dlg.ChoiceBox.Visibility = Visibility.Visible;
+        if (advancedLabel != null)
+        {
+            dlg.AdvancedRow.Visibility = Visibility.Visible;
+            dlg.AdvancedText.Text = advancedLabel;
+            dlg.ChoiceBox.IsEnabled = false;
+            void Sync()
+            {
+                bool on = dlg.AdvancedToggle.IsChecked == true;
+                dlg.ChoiceBox.IsEnabled = on;
+                if (!on) dlg.ChoiceBox.SelectedIndex = def;
+            }
+            dlg.AdvancedToggle.Checked += (_, _) => Sync();
+            dlg.AdvancedToggle.Unchecked += (_, _) => Sync();
+            dlg.AdvancedText.MouseLeftButtonUp += (_, _) => dlg.AdvancedToggle.IsChecked = dlg.AdvancedToggle.IsChecked != true;
+        }
         var owner = ActiveOwner();
         if (owner != null && owner.IsLoaded) dlg.Owner = owner;
         else dlg.WindowStartupLocation = WindowStartupLocation.CenterScreen;
         return dlg.ShowDialog() == true ? (dlg.ChoiceBox.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag as string : null;
     }
 
-    /// <summary>A two-button prompt with custom labels (e.g. Download / Later). True = primary chosen.</summary>
+    /// <summary>
+    /// A two-button prompt with custom labels (e.g. Download / Later). True = primary chosen.
+    /// <paramref name="image"/> (PNG/JPG bytes, e.g. a package icon) replaces the round glyph.
+    /// </summary>
     public static bool Prompt(string message, string primaryText, string secondaryText,
-        DialogKind kind = DialogKind.Info, string? title = null)
+        DialogKind kind = DialogKind.Info, string? title = null, byte[]? image = null)
     {
         var dlg = new DialogWindow(message, kind, title, confirm: true, danger: false);
         dlg.BtnPrimary.Content = primaryText;
         dlg.BtnSecondary.Content = secondaryText;
         dlg.BtnSecondary.Visibility = Visibility.Visible;
+        dlg.ShowImage(image);
         var owner = ActiveOwner();
         if (owner != null && owner.IsLoaded) dlg.Owner = owner;
         else dlg.WindowStartupLocation = WindowStartupLocation.CenterScreen;
         return dlg.ShowDialog() == true;
+    }
+
+    /// <summary>
+    /// Up to three answers: returns the index of the chosen button (0 = primary, 1 = second,
+    /// 2 = third), or -1 when cancelled (Esc). The last label acts as Cancel.
+    /// </summary>
+    public static int Ask(string message, IReadOnlyList<string> buttons, bool dangerPrimary = false, string? title = null, byte[]? image = null)
+    {
+        var dlg = new DialogWindow(message, DialogKind.Question, title, confirm: true, danger: dangerPrimary);
+        dlg._choice = -1;
+        dlg.BtnPrimary.Content = buttons[0];
+        dlg.BtnPrimary.Click += (_, _) => dlg._choice = 0;
+        if (buttons.Count > 1)
+        {
+            dlg.BtnSecondary.Content = buttons[1];
+            dlg.BtnSecondary.Visibility = Visibility.Visible;
+            dlg.BtnSecondary.Click += (_, _) => dlg._choice = 1;
+        }
+        if (buttons.Count > 2)
+        {
+            // Order on screen: [third] [second] [primary]; the third (last) one is the "Cancel".
+            dlg.BtnTertiary.Content = buttons[2];
+            dlg.BtnTertiary.Visibility = Visibility.Visible;
+            dlg.BtnSecondary.IsCancel = false;
+            dlg.BtnTertiary.IsCancel = true;
+            dlg.BtnTertiary.Click += (_, _) => { dlg._choice = 2; dlg.DialogResult = false; };
+        }
+        dlg.ShowImage(image);
+        var owner = ActiveOwner();
+        if (owner != null && owner.IsLoaded) dlg.Owner = owner;
+        else dlg.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        dlg.ShowDialog();
+        return dlg._choice;
+    }
+
+    private void ShowImage(byte[]? image)
+    {
+        if (image == null || BusyOverlay.LoadImage(image, 128) is not { } src) return;
+        ImageBox.Source = src;
+        ImageFrame.Visibility = Visibility.Visible;
+        IconBg.Visibility = Visibility.Collapsed;
+        TitleText.Margin = new Thickness(20, 2, 0, 0);
+        ((FrameworkElement)MessageText.Parent).Margin = new Thickness(20, 8, 0, 0);
     }
 
     public static bool Confirm(string message, bool danger = false, string? title = null)

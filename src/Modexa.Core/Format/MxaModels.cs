@@ -9,7 +9,7 @@ public enum MxaModType
     Addon = 0,
     /// <summary>Loose/copy-paste files placed at mapped destinations in the game folder.</summary>
     Loose = 1,
-    /// <summary>An OpenIV .oiv package applied through the OIV engine (Pro).</summary>
+    /// <summary>An OpenIV .oiv package, installed by the OIV installer.</summary>
     Oiv = 2
 }
 
@@ -59,6 +59,14 @@ public sealed class MxaManifest
 
     /// <summary>Addon only: dlcpacks folder name (the dlc.rpf is placed under it and registered).</summary>
     [JsonPropertyName("dlcName")] public string? DlcName { get; set; }
+
+    /// <summary>Addon pack of several DLCs (e.g. 32 cars): every dlcpacks folder name to register.</summary>
+    [JsonPropertyName("dlcNames")] public List<string> DlcNames { get; set; } = new();
+
+    /// <summary>All DLC names to register (<see cref="DlcName"/> and <see cref="DlcNames"/>).</summary>
+    [JsonIgnore]
+    public IEnumerable<string> AllDlcs => DlcNames.Prepend(DlcName ?? "").Where(n => !string.IsNullOrWhiteSpace(n))
+        .Distinct(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Oiv only: the .oiv/.oivs path inside the payload.</summary>
     [JsonPropertyName("oivPath")] public string? OivPath { get; set; }

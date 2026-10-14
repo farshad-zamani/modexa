@@ -31,25 +31,51 @@ public sealed class ModInstallRecord
     public string? GameTitle { get; set; }
     public string GameFolder { get; set; } = "";
     public string? DlcName { get; set; }                   // addon: dlcpacks folder registered
+    /// <summary>Add-on pack of several DLCs: every dlcpacks folder it registered.</summary>
+    public List<string> DlcNames { get; set; } = new();
+
+    /// <summary>Every DLC the mod registered in dlclist.xml.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IEnumerable<string> AllDlcs => DlcNames.Prepend(DlcName ?? "").Where(n => !string.IsNullOrWhiteSpace(n))
+        .Distinct(StringComparer.OrdinalIgnoreCase);
     public string? ProductId { get; set; }                 // FSLM product of a paid package (null otherwise)
     /// <summary>File name the mod was installed from (.oiv / .mxa / .rpf / .zip).</summary>
     public string? Source { get; set; }
     public string? Version { get; set; }
     public string? Author { get; set; }
+    /// <summary>OIV: the package's own id (assembly.xml &lt;package id&gt;), when it has one.</summary>
+    public string? PackageId { get; set; }
+    /// <summary>OIV: SHA-256 of the package definition (assembly.xml / super.xml) — the same package file.</summary>
+    public string? PackageHash { get; set; }
+    /// <summary>The package's icon, saved with the mod's backups (shown in the installed lists).</summary>
+    public string? IconFile { get; set; }
+    /// <summary>A "Prepare for mods" step installed from the game page (Mod Runner, GameConfig, Menu…).</summary>
+    public Prepare.PrepareStep? Setup { get; set; }
     public DateTime InstalledUtc { get; set; } = DateTime.UtcNow;
     public List<InstalledFile> Files { get; set; } = new();
     /// <summary>Files changed inside game archives (OIV &lt;archive&gt; operations), for uninstall.</summary>
     public List<ArchiveEdit> ArchiveEdits { get; set; } = new();
+    /// <summary>
+    /// Archives this install copied from the game into mods\ (normalized, e.g. "update/update.rpf").
+    /// Files in them that the mod changed were the game's own, so no backup copies are kept: the
+    /// original is read back from the game when needed, or the whole copy is deleted on uninstall.
+    /// </summary>
+    public List<string> CreatedArchives { get; set; } = new();
     /// <summary>Folders the mod created (game-relative); removed again on uninstall when empty.</summary>
     public List<string> CreatedDirs { get; set; } = new();
     /// <summary>Operations the installer skipped (shown to the user once after installing).</summary>
     public List<string> Warnings { get; set; } = new();
 
-    /// <summary>Short type label: Modexa (licensed package) / OIV / Add-on / Files.</summary>
+    /// <summary>Short type label: Setup / Modexa (licensed package) / OIV / Add-on / Files.</summary>
     [System.Text.Json.Serialization.JsonIgnore]
-    public string KindLabel => ProductId != null || Source?.EndsWith(".mxa", StringComparison.OrdinalIgnoreCase) == true
-        ? "Modexa"
+    public string KindLabel => Setup != null ? "Setup"
+        : ProductId != null || Source?.EndsWith(".mxa", StringComparison.OrdinalIgnoreCase) == true ? "Modexa"
         : ModType switch { MxaModType.Oiv => "OIV", MxaModType.Addon => "Add-on", _ => "Files" };
+
+    /// <summary>All archives the mod touched (edited or copied).</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IEnumerable<string> Archives => ArchiveEdits.Select(e => e.Archive).Concat(CreatedArchives)
+        .Select(Rpf.ModsArchives.Normalize).Distinct(StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>Persistent list of installed mods (JSON in the user data folder).</summary>
@@ -66,6 +92,8 @@ public static class InstalledModsStore
     /// <summary>Mods installed into one game folder, oldest first.</summary>
     public static List<ModInstallRecord> ForFolder(string gameFolder)
         => All().Where(r => SameFolder(r.GameFolder, gameFolder)).OrderBy(r => r.InstalledUtc).ToList();
+
+    public static ModInstallRecord? Get(string id) => All().FirstOrDefault(r => r.Id == id);
 
     public static void Add(ModInstallRecord record)
     {

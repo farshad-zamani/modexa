@@ -27,6 +27,7 @@ public partial class MainWindow : Window, INavigator
         StateChanged += (_, _) => OnWindowStateChanged();
         SizeChanged += (_, _) => { if (WindowState == WindowState.Maximized) FitMaximizedFrame(); };
         ThemeService.TierChanged += OnTierChanged;
+        ThemeService.LookChanged += OnLookChanged;
         Loc.Instance.LanguageChanged += OnLanguageChanged;
 
         var app = (App)Application.Current;
@@ -136,6 +137,7 @@ public partial class MainWindow : Window, INavigator
         }
     }
 
+    /// <summary>The license changed: badge, upgrade shortcut, theme picker.</summary>
     private void OnTierChanged(LicenseTier tier)
     {
         TierText.Text = tier switch
@@ -146,16 +148,94 @@ public partial class MainWindow : Window, INavigator
         };
         // The gold upgrade shortcut disappears once the user is on Pro.
         GoProBtn.Visibility = tier == LicenseTier.Pro ? Visibility.Collapsed : Visibility.Visible;
+        // Licensed users can pick the look they like.
+        BtnTheme.Visibility = tier == LicenseTier.Free ? Visibility.Collapsed : Visibility.Visible;
+        ThemePopup.IsOpen = false;
+    }
 
-        // Fade the ambient gold edge in/out to match the tier; fully collapse it on Free.
-        double target = tier switch { LicenseTier.Pro => 1.0, LicenseTier.Plus => 0.55, _ => 0.0 };
+    /// <summary>The look changed (license tier, or the user's pick from the theme menu).</summary>
+    private void OnLookChanged(LicenseTier look, bool licensed)
+    {
+        // Fade the ambient gold edge in/out to match the look; fully collapse it on Free.
+        double target = look switch { LicenseTier.Pro => 1.0, LicenseTier.Plus => 0.55, _ => 0.0 };
         if (target > 0) GlowOverlay.Visibility = Visibility.Visible;
         var anim = new DoubleAnimation(target, TimeSpan.FromMilliseconds(400)) { EasingFunction = new CubicEase() };
         if (target <= 0) anim.Completed += (_, _) => GlowOverlay.Visibility = Visibility.Collapsed;
         GlowOverlay.BeginAnimation(OpacityProperty, anim);
 
-        Ambience.SetTier(tier);
-        SetProFlourish(tier == LicenseTier.Pro);
+        // A licensed user on the Free look keeps the animated threads and lights — in cyan.
+        Ambience.SetTier(look, licensed);
+        SetProFlourish(look == LicenseTier.Pro);
+    }
+
+    // ---- Theme picker --------------------------------------------------------------------------
+
+    private void Theme_Click(object sender, RoutedEventArgs e)
+    {
+        if (ThemePopup.IsOpen) { ThemePopup.IsOpen = false; return; }
+        BuildThemeOptions();
+        ThemePopup.IsOpen = true;
+    }
+
+    private void BuildThemeOptions()
+    {
+        ThemeOptions.Children.Clear();
+        ThemeOptions.FlowDirection = LanguageService.Flow;
+        var looks = new (LicenseTier tier, string key, Color from, Color to)[]
+        {
+            (LicenseTier.Free, "Theme_Free", Color.FromRgb(0x48, 0xE0, 0xF0), Color.FromRgb(0x1C, 0x8F, 0xA3)),
+            (LicenseTier.Plus, "Theme_Plus", Color.FromRgb(0xF0, 0xCB, 0x6E), Color.FromRgb(0xB0, 0x7F, 0x2E)),
+            (LicenseTier.Pro, "Theme_Pro", Color.FromRgb(0xFF, 0xE3, 0x9A), Color.FromRgb(0x14, 0x10, 0x08)),
+        };
+        foreach (var (tier, key, from, to) in looks)
+        {
+            bool allowed = ThemeService.CanUseLook(tier);
+            bool current = ThemeService.LookTier == tier;
+            var row = new Grid();
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var swatch = new System.Windows.Shapes.Ellipse
+            {
+                Width = 16, Height = 16, VerticalAlignment = VerticalAlignment.Center,
+                Fill = new LinearGradientBrush(from, to, 45),
+                StrokeThickness = 1
+            };
+            swatch.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty, "Stroke.Strong");
+            row.Children.Add(swatch);
+
+            var label = new TextBlock { Margin = new Thickness(12, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center };
+            label.Bind(TextBlock.TextProperty, key);
+            Grid.SetColumn(label, 1);
+            row.Children.Add(label);
+
+            var end = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
+            if (current)
+            {
+                end.Style = (Style)FindResource("Icon");
+                end.FontSize = 13;
+                end.Text = "\uE73E";
+                end.SetResourceReference(TextBlock.ForegroundProperty, "Accent");
+            }
+            else if (!allowed)
+            {
+                end.FontSize = 11.5;
+                end.Bind(TextBlock.TextProperty, "Theme_ProOnly");
+                end.SetResourceReference(TextBlock.ForegroundProperty, "Text.Muted");
+            }
+            Grid.SetColumn(end, 2);
+            row.Children.Add(end);
+
+            var button = new Button { Style = (Style)FindResource("MenuRowButton"), Content = row, IsEnabled = allowed };
+            button.Click += (_, _) =>
+            {
+                ThemePopup.IsOpen = false;
+                // Picking the license's own look means "follow the license" (an upgrade then shows).
+                ThemeService.ChooseLook(tier == ThemeService.CurrentTier ? null : tier);
+            };
+            ThemeOptions.Children.Add(button);
+        }
     }
 
     /// <summary>Pro-only motion: a light sweep around the window frame and a shimmer on the badge.</summary>
@@ -260,31 +340,34 @@ public partial class MainWindow : Window, INavigator
         Activate();
         Topmost = true; Topmost = false; // reliably bring to front
         if (string.IsNullOrWhiteSpace(path)) return;
-        Dispatcher.BeginInvoke(new Action(async () => await OpenModFileAsync(path)),
+        Dispatcher.BeginInvoke(new Action(async () => await OpenModFilesAsync(new[] { path })),
             System.Windows.Threading.DispatcherPriority.Background);
     }
 
     private static readonly string[] DropExts = { ".mxa", ".oiv", ".oivs", ".rpf", ".zip" };
 
     /// <summary>
-    /// A mod file opened from Explorer or dropped on the window: it is installed on its game's page
-    /// (where the game folder is known). The current page is used when it is the right game.
+    /// Mod files opened from Explorer or dropped on the window: they are installed on their game's
+    /// page (where the game folder is known). OpenIV / Pro files go together to the GTA V page (so a
+    /// split mod installs part 1, part 2, … in one go); each .mxa goes to the game it is made for.
     /// </summary>
+    private async Task OpenModFilesAsync(IReadOnlyList<string> paths)
+    {
+        var gtaFiles = paths.Where(p => !p.EndsWith(Modexa.Core.Format.MxaFile.Extension, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (gtaFiles.Count > 0)
+        {
+            if (PART_Content.Content is GtaVView here) await here.InstallFilesAsync(gtaFiles);
+            else if (ChooseGtaVEdition() is { } edition) Navigate(new GtaVView(this, edition) { PendingFiles = gtaFiles });
+        }
+        foreach (var mxa in paths.Except(gtaFiles))
+            await OpenModFileAsync(mxa);
+    }
+
+    /// <summary>One .mxa: installed on the page of the game (and GTA V edition) it is made for.</summary>
     private async Task OpenModFileAsync(string path)
     {
-        bool mxa = path.EndsWith(Modexa.Core.Format.MxaFile.Extension, StringComparison.OrdinalIgnoreCase);
         try
         {
-            if (!mxa)
-            {
-                // OIV and Pro raw mods are GTA V only.
-                if (PART_Content.Content is GtaVView here) { await here.InstallFileAsync(path); return; }
-                var edition = ChooseGtaVEdition();
-                if (edition == null) return;
-                Navigate(new GtaVView(this, edition.Value) { PendingFile = path });
-                return;
-            }
-
             var info = await Task.Run(() => Modexa.Core.Format.MxaFile.ReadInfo(path));
             var game = GameOfPackage(info.Game);
             if (game == null)
@@ -297,10 +380,11 @@ public partial class MainWindow : Window, INavigator
                 Modexa.Core.Games.GameEdition? edition =
                     Enum.TryParse<Modexa.Core.Games.GameEdition>(info.Edition, true, out var ed) && ed != Modexa.Core.Games.GameEdition.Unknown
                         ? ed : null;
-                if (edition == null && PART_Content.Content is GtaVView any) { await any.InstallFileAsync(path); return; }
+                if (edition == null && PART_Content.Content is GtaVView any) { await any.InstallFilesAsync(new[] { path }); return; }
+                if (PART_Content.Content is GtaVView same && same.Edition == edition) { await same.InstallFilesAsync(new[] { path }); return; }
                 edition ??= ChooseGtaVEdition();
                 if (edition == null) return;
-                Navigate(new GtaVView(this, edition.Value) { PendingFile = path });
+                Navigate(new GtaVView(this, edition.Value) { PendingFiles = new[] { path } });
                 return;
             }
             if (PART_Content.Content is SimpleGameView sv && sv.Game == game) { await sv.InstallFileAsync(path); return; }
@@ -341,24 +425,24 @@ public partial class MainWindow : Window, INavigator
 
     private void Window_DragOver(object sender, DragEventArgs e)
     {
-        e.Effects = FromDrop(e) != null ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Effects = FromDrop(e).Count > 0 ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
     }
 
     private void Window_Drop(object sender, DragEventArgs e)
     {
-        string? path = FromDrop(e);
-        if (path == null) return;
-        // Installs happen on the game's page, so the mod lands in the right game folder.
-        Dispatcher.BeginInvoke(new Action(async () => await OpenModFileAsync(path)),
+        var paths = FromDrop(e);
+        if (paths.Count == 0) return;
+        // Installs happen on the game's page, so the mods land in the right game folder.
+        Dispatcher.BeginInvoke(new Action(async () => await OpenModFilesAsync(paths)),
             System.Windows.Threading.DispatcherPriority.Background);
     }
 
-    private static string? FromDrop(DragEventArgs e)
+    private static List<string> FromDrop(DragEventArgs e)
     {
-        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return null;
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return new List<string>();
         var files = (string[])e.Data.GetData(DataFormats.FileDrop);
-        return files.FirstOrDefault(f => DropExts.Any(x => f.EndsWith(x, StringComparison.OrdinalIgnoreCase)));
+        return files.Where(f => DropExts.Any(x => f.EndsWith(x, StringComparison.OrdinalIgnoreCase))).ToList();
     }
 
     // ---- Language ------------------------------------------------------------------------------
@@ -448,6 +532,7 @@ public partial class MainWindow : Window, INavigator
     protected override void OnClosed(EventArgs e)
     {
         ThemeService.TierChanged -= OnTierChanged;
+        ThemeService.LookChanged -= OnLookChanged;
         Loc.Instance.LanguageChanged -= OnLanguageChanged;
         base.OnClosed(e);
     }

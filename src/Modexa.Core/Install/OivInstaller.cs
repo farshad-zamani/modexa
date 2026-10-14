@@ -1,5 +1,5 @@
 using System.IO;
-using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
@@ -18,8 +18,18 @@ public sealed class OivPackageInfo
     public string? Author { get; set; }
     public string? Description { get; set; }
     public bool IsSuper { get; set; }
+    /// <summary>The package's own id (&lt;package id="{…}"&gt;), when it has one.</summary>
+    public string? Id { get; set; }
+    /// <summary>SHA-256 of the package definition (assembly.xml / super.xml): equal = the same package.</summary>
+    public string Hash { get; set; } = "";
+    /// <summary>The package's icon.png, when it has one.</summary>
+    public byte[]? Icon { get; set; }
     /// <summary>Top-level game archives the package edits (e.g. "update/update.rpf").</summary>
     public List<string> Archives { get; set; } = new();
+    /// <summary>Game-relative files the package writes or deletes outside archives.</summary>
+    public List<string> DiskTargets { get; set; } = new();
+    /// <summary>Total bytes of content the package installs (drives the progress bar).</summary>
+    public long TotalBytes { get; set; }
 }
 
 /// <summary>Outcome of applying a package: operations applied vs skipped (unsupported).</summary>
@@ -30,9 +40,25 @@ public sealed class OivResult
 }
 
 /// <summary>
+/// Install progress: bytes done of total (archive copies included), what is being worked on, and
+/// whether that is copying a game archive into mods\ (rather than installing files).
+/// </summary>
+public readonly record struct OivProgress(long Done, long Total, string? Current, bool Copying = false);
+
+public sealed class OivApplyOptions
+{
+    /// <summary>
+    /// Archives (normalized, e.g. "update/update.rpf") whose mods copy was just made from the game
+    /// for this install: their files are still the game's own, so no backup copies are needed.
+    /// </summary>
+    public IEnumerable<string>? FreshArchives { get; init; }
+    public IProgress<OivProgress>? Progress { get; init; }
+}
+
+/// <summary>
 /// Installs OpenIV packages — available in every tier: <c>.oiv</c> (package format 2.x,
 /// <c>assembly.xml</c>) and <c>.oivs</c> "super" packages (<c>super.xml</c>, installed with their
-/// default selection).
+/// default selection). Packages are read straight from the zip, never extracted as a whole.
 ///
 /// Operations, matching OpenIV:
 ///   * top level: <c>add</c> (anything for update\, x64\ or *.rpf goes to the mods folder — the
@@ -49,71 +75,94 @@ public sealed class OivResult
 /// </summary>
 public static class OivInstaller
 {
-    private const long MaxArchiveEntryBytes = int.MaxValue - 64 * 1024;
+    /// <summary>Weight of an operation that moves no content (xml/text edits, deletes) in the progress total.</summary>
+    private const long OpWeight = 64 * 1024;
 
-    public static bool IsPackageFile(string path)
-        => Path.GetExtension(path).ToLowerInvariant() is ".oiv" or ".oivs";
-
-    /// <summary>Extracts an .oiv/.oivs (zip) to a temp folder, or returns the folder if already extracted.</summary>
-    public static string ExtractToTemp(string packagePath)
-    {
-        if (Directory.Exists(packagePath)) return packagePath;
-        string dir = Path.Combine(AppPaths.CacheDir, "oiv", Guid.NewGuid().ToString("N"));
-        AppPaths.EnsureDir(dir);
-        try { ZipFile.ExtractToDirectory(packagePath, dir); }
-        catch (InvalidDataException ex)
-        {
-            TryDeleteDir(dir);
-            throw new ModInstallException(ModInstallException.BadPackage, "The file is not a valid OIV package (zip).", ex);
-        }
-        return dir;
-    }
-
-    public static void TryDeleteDir(string dir)
-    {
-        try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
-    }
+    public static bool IsPackageFile(string path) => OivPackage.IsPackageFile(path);
 
     /// <summary>Reads the package's metadata and which game archives it edits (no changes made).</summary>
-    public static OivPackageInfo Inspect(string packageDir)
+    public static OivPackageInfo Inspect(string path)
     {
-        var ctx = new Ctx(packageDir, packageDir, new ModInstallRecord(), new OivResult());
+        using var pkg = OivPackage.Open(path);
+        return Inspect(pkg);
+    }
+
+    public static OivPackageInfo Inspect(OivPackage pkg)
+    {
+        var ctx = new Ctx(pkg, Path.GetTempPath(), new ModInstallRecord(), new OivResult(), null);
         var ops = ctx.LoadOperations();
-        ctx.Info.Archives = ops.Where(o => o.Name.Equals("archive", StringComparison.OrdinalIgnoreCase))
-            .Select(o => ModsArchives.Normalize(o.GetAttribute("path")))
-            .Where(p => p.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        return ctx.Info;
+        var info = ctx.Info;
+        info.Icon = pkg.TryReadAllBytes("icon.png");
+        foreach (var op in ops)
+        {
+            switch (op.Name.ToLowerInvariant())
+            {
+                case "archive":
+                    string a = ModsArchives.Normalize(op.GetAttribute("path"));
+                    if (a.Length > 0 && !info.Archives.Contains(a, StringComparer.OrdinalIgnoreCase)) info.Archives.Add(a);
+                    break;
+                case "add" or "delete":
+                    string dest = op.InnerText.Trim();
+                    if (dest.Length > 0) info.DiskTargets.Add(DiskRelative(dest));
+                    break;
+                case "xml" or "text":
+                    string p = op.GetAttribute("path");
+                    if (p.Length > 0) info.DiskTargets.Add(DiskRelative(p));
+                    break;
+            }
+        }
+        info.TotalBytes = ops.Sum(o => Weight(ctx, o));
+        return info;
     }
 
     /// <summary>
-    /// Applies an extracted package to <paramref name="gameFolder"/>, recording everything on
-    /// <paramref name="record"/> (also fills its name/version/author from the package).
+    /// True when <paramref name="record"/> is this same mod file installed earlier (a reinstall).
+    /// Decided by the file name only: the parts of a split mod always come as differently named files
+    /// (Package.1.oiv, Package.2.oiv…) and are separate mods, whatever their packages say inside.
     /// </summary>
-    public static OivResult Apply(string packageDir, string gameFolder, ModInstallRecord record)
+    public static bool IsSamePackage(ModInstallRecord record, string packagePath)
+        => record.ModType == MxaModType.Oiv && record.ProductId == null && record.Setup == null
+           && string.Equals(record.Source, Path.GetFileName(packagePath.TrimEnd('\\', '/')), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Applies a package (an .oiv/.oivs file or an extracted folder) — see the other overload.</summary>
+    public static OivResult Apply(string path, string gameFolder, ModInstallRecord record, OivApplyOptions? options = null)
+    {
+        using var pkg = OivPackage.Open(path);
+        return Apply(pkg, gameFolder, record, options);
+    }
+
+    /// <summary>
+    /// Applies a package to <paramref name="gameFolder"/>, recording everything on
+    /// <paramref name="record"/> (also fills its name/version/author/id from the package).
+    /// </summary>
+    public static OivResult Apply(OivPackage pkg, string gameFolder, ModInstallRecord record, OivApplyOptions? options = null)
     {
         var result = new OivResult();
-        var ctx = new Ctx(packageDir, gameFolder, record, result);
+        var ctx = new Ctx(pkg, gameFolder, record, result, options?.Progress);
         record.GameFolder = gameFolder;
         record.ModType = MxaModType.Oiv;
+        foreach (var a in options?.FreshArchives ?? Array.Empty<string>())
+            ctx.MarkFresh(ModsArchives.Normalize(a));
         try
         {
             var ops = ctx.LoadOperations();
             if (!string.IsNullOrWhiteSpace(ctx.Info.Name)) record.Name = ctx.Info.Name;
             record.Version ??= ctx.Info.Version;
             record.Author ??= ctx.Info.Author;
+            record.PackageId = ctx.Info.Id;
+            record.PackageHash = ctx.Info.Hash;
+            ctx.Total = ops.Sum(o => Weight(ctx, o)) + CopyBytes(ops, gameFolder);
+            ctx.Report(force: true);
             foreach (var op in ops)
                 RunTopLevel(ctx, op);
+            SaveIcon(pkg, record);
         }
         catch (Exception ex)
         {
             Log.Error("OIV install failed, rolling back", ex);
-            try { ArchiveEditRecorder.Revert(record); } catch { }
-            try { LooseFileInstaller.Uninstall(record); } catch { }
-            record.Files.Clear();
-            record.ArchiveEdits.Clear();
+            Rollback(record);
             if (ex is ModInstallException) throw;
+            if (ex is ModsArchiveException mae) throw new ModInstallException(ModInstallException.NotPrepared, mae.Message, mae);
             throw new ModInstallException("failed", ex.Message, ex);
         }
 
@@ -122,43 +171,120 @@ public static class OivInstaller
             Log.Info("OIV skipped: " + s);
             record.Warnings.Add(s);
         }
+        ctx.Done = ctx.Total;
+        ctx.Report(force: true);
         return result;
+    }
+
+    /// <summary>Bytes of game archives that will be copied into mods\ for these operations.</summary>
+    private static long CopyBytes(IEnumerable<XmlElement> ops, string gameFolder)
+        => ops.Where(o => o.Name.Equals("archive", StringComparison.OrdinalIgnoreCase))
+            .Select(o => ModsArchives.Normalize(o.GetAttribute("path")))
+            .Where(p => p.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Sum(p => ModsArchives.CopySize(gameFolder, p));
+
+    /// <summary>
+    /// Disk space the install needs: copies of the game archives it edits plus the content it
+    /// writes (both land in the game folder).
+    /// </summary>
+    public static long SpaceNeeded(OivPackageInfo info, string gameFolder)
+        => info.TotalBytes + info.Archives.Sum(a => ModsArchives.CopySize(gameFolder, a));
+
+    /// <summary>Undoes a half-applied install; archive copies made for it (and unused by others) are deleted.</summary>
+    private static void Rollback(ModInstallRecord record)
+    {
+        var errors = new List<string>();
+        var others = InstalledModsStore.ForFolder(record.GameFolder).Where(r => r.Id != record.Id).ToList();
+        var released = record.CreatedArchives.Where(a => !ModsArchives.InUse(record.GameFolder, a, others))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        try { ArchiveEditRecorder.Revert(record, Array.Empty<ModInstallRecord>(), errors, released); } catch { }
+        try { LooseFileInstaller.Uninstall(record); } catch { }
+        foreach (var a in released)
+            try { ModsArchives.Release(record.GameFolder, a); } catch { }
+        try { string dir = ModBackups.DirFor(record); if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
+        record.Files.Clear();
+        record.ArchiveEdits.Clear();
+        record.CreatedArchives.Clear();
+    }
+
+    /// <summary>Keeps the package icon next to the mod's backups (shown in the installed lists).</summary>
+    private static void SaveIcon(OivPackage pkg, ModInstallRecord record)
+    {
+        try
+        {
+            var icon = pkg.TryReadAllBytes("icon.png");
+            if (icon == null || icon.Length == 0 || icon.Length > 2 * 1024 * 1024) return;
+            string dir = ModBackups.DirFor(record);
+            AppPaths.EnsureDir(dir);
+            string file = Path.Combine(dir, "icon.png");
+            File.WriteAllBytes(file, icon);
+            record.IconFile = file;
+        }
+        catch { /* cosmetic */ }
     }
 
     // ---- package loading ---------------------------------------------------------------------
 
     private sealed class Ctx
     {
-        public readonly string PackageDir, ContentDir, GameFolder;
+        public readonly OivPackage Package;
+        public readonly string GameFolder;
         public readonly ModInstallRecord Record;
         public readonly OivResult Result;
         public readonly ArchiveEditRecorder Recorder;
         public readonly OivPackageInfo Info = new();
+        private readonly HashSet<string> _fresh = new(StringComparer.OrdinalIgnoreCase);
+        private readonly IProgress<OivProgress>? _progress;
+        private long _lastTick;
 
-        public Ctx(string packageDir, string gameFolder, ModInstallRecord record, OivResult result)
+        public long Total, Done;
+        public string? Current;
+        public bool Copying;
+
+        public Ctx(OivPackage package, string gameFolder, ModInstallRecord record, OivResult result, IProgress<OivProgress>? progress)
         {
-            PackageDir = packageDir;
-            ContentDir = Path.Combine(packageDir, "content");
+            Package = package;
             GameFolder = Path.GetFullPath(gameFolder);
             Record = record;
             Result = result;
             Recorder = new ArchiveEditRecorder(record);
+            _progress = progress;
+        }
+
+        public bool IsFresh(string archive) => _fresh.Contains(archive);
+
+        public void MarkFresh(string archive)
+        {
+            _fresh.Add(archive);
+            if (!Record.CreatedArchives.Contains(archive, StringComparer.OrdinalIgnoreCase)) Record.CreatedArchives.Add(archive);
+        }
+
+        /// <summary>Reports progress, at most ~8 times a second.</summary>
+        public void Report(bool force = false)
+        {
+            if (_progress == null) return;
+            long now = Environment.TickCount64;
+            if (!force && now - _lastTick < 120) return;
+            _lastTick = now;
+            _progress.Report(new OivProgress(Math.Min(Done, Total), Total, Current, Copying));
         }
 
         /// <summary>The operation elements of the package, in order.</summary>
         public List<XmlElement> LoadOperations()
         {
-            string assembly = Path.Combine(PackageDir, "assembly.xml");
-            string super = Path.Combine(PackageDir, "super.xml");
             var ops = new List<XmlElement>();
 
-            if (File.Exists(assembly))
+            if (Package.Exists("assembly.xml"))
             {
-                var doc = Load(assembly);
+                byte[] raw = Package.ReadAllBytes("assembly.xml");
+                Info.Hash = Convert.ToHexString(SHA256.HashData(raw));
+                var doc = Load(raw, "assembly.xml");
                 var pkg = doc.DocumentElement;
                 string target = pkg?.GetAttribute("target") ?? "";
                 if (target.Length > 0 && !target.Equals("Five", StringComparison.OrdinalIgnoreCase))
                     throw new ModInstallException(ModInstallException.Unsupported, $"This OIV package is for another game ({target}).");
+                Info.Id = NullIfEmpty(pkg?.GetAttribute("id"));
                 ReadMetadata(pkg?.SelectSingleNode("metadata"));
                 var content = pkg?.SelectSingleNode("content")
                               ?? throw new ModInstallException(ModInstallException.BadPackage, "No <content> in assembly.xml.");
@@ -166,13 +292,16 @@ public static class OivInstaller
                 return ops;
             }
 
-            if (File.Exists(super))
+            if (Package.Exists("super.xml"))
             {
-                var doc = Load(super);
+                byte[] raw = Package.ReadAllBytes("super.xml");
+                Info.Hash = Convert.ToHexString(SHA256.HashData(raw));
+                var doc = Load(raw, "super.xml");
                 var root = doc.DocumentElement;
                 if (root == null || root.Name != "superpackage")
                     throw new ModInstallException(ModInstallException.BadPackage, "Invalid super.xml.");
                 Info.IsSuper = true;
+                Info.Id = NullIfEmpty(root.GetAttribute("id"));
                 ReadMetadata(root.SelectSingleNode("metadata"));
 
                 // Default selection: required modules, default-on modules, each group's default option.
@@ -204,11 +333,17 @@ public static class OivInstaller
             throw new ModInstallException(ModInstallException.BadPackage, "Not an OIV package (no assembly.xml or super.xml).");
         }
 
-        private static XmlDocument Load(string path)
+        private static string? NullIfEmpty(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+        private static XmlDocument Load(byte[] raw, string name)
         {
             var doc = new XmlDocument();
-            try { doc.Load(path); }
-            catch (XmlException ex) { throw new ModInstallException(ModInstallException.BadPackage, $"{Path.GetFileName(path)} is not valid XML: {ex.Message}", ex); }
+            try
+            {
+                using var ms = new MemoryStream(raw);
+                doc.Load(ms);
+            }
+            catch (XmlException ex) { throw new ModInstallException(ModInstallException.BadPackage, $"{name} is not valid XML: {ex.Message}", ex); }
             return doc;
         }
 
@@ -236,28 +371,18 @@ public static class OivInstaller
         private IEnumerable<XmlElement> FolderAsAdds(XmlDocument doc, string source)
         {
             if (string.IsNullOrWhiteSpace(source)) yield break;
-            string rel = source.Replace('/', '\\').Trim('\\');
-            string baseDir = SafeContentPath(rel);
-            if (!Directory.Exists(baseDir)) yield break;
-            foreach (var file in Directory.EnumerateFiles(baseDir, "*", SearchOption.AllDirectories))
+            string rel = source.Replace('\\', '/').Trim('/');
+            foreach (var inside in Package.FilesUnder("content/" + rel))
             {
-                string inside = Path.GetRelativePath(baseDir, file);
                 var add = doc.CreateElement("add");
-                add.SetAttribute("source", Path.Combine(rel, inside));
-                add.InnerText = inside;
+                add.SetAttribute("source", rel + "/" + inside);
+                add.InnerText = inside.Replace('/', '\\');
                 yield return add;
             }
         }
 
-        /// <summary>A content file path, refusing anything that escapes the package's content folder.</summary>
-        public string SafeContentPath(string source)
-        {
-            string full = Path.GetFullPath(Path.Combine(ContentDir, source.Replace('/', '\\').TrimStart('\\')));
-            string root = Path.GetFullPath(ContentDir).TrimEnd('\\') + "\\";
-            if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase))
-                throw new ModInstallException(ModInstallException.BadPackage, $"Invalid source path: {source}");
-            return full;
-        }
+        /// <summary>Package path of a content file (the package refuses paths that escape it).</summary>
+        public static string ContentPath(string source) => "content/" + source.Replace('\\', '/').Trim().TrimStart('/');
 
         /// <summary>
         /// Game-relative destination for a file on disk. Anything under update\ or x64\ or any .rpf
@@ -265,14 +390,7 @@ public static class OivInstaller
         /// </summary>
         public string DiskTarget(string dest)
         {
-            string rel = dest.Replace('/', '\\').Trim().TrimStart('\\');
-            bool mods = false;
-            if (rel.StartsWith("mods\\", StringComparison.OrdinalIgnoreCase)) { rel = rel[5..]; mods = true; }
-            mods |= rel.StartsWith("update", StringComparison.OrdinalIgnoreCase)
-                    || rel.StartsWith("x64", StringComparison.OrdinalIgnoreCase)
-                    || rel.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase);
-            string result = mods ? Path.Combine("mods", rel) : rel;
-
+            string result = DiskRelative(dest);
             string full = Path.GetFullPath(Path.Combine(GameFolder, result));
             if (!full.StartsWith(GameFolder.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase))
                 throw new ModInstallException(ModInstallException.BadPackage, $"Destination escapes the game folder: {dest}");
@@ -280,7 +398,36 @@ public static class OivInstaller
         }
     }
 
+    private static string DiskRelative(string dest)
+    {
+        string rel = dest.Replace('/', '\\').Trim().TrimStart('\\');
+        bool mods = false;
+        if (rel.StartsWith("mods\\", StringComparison.OrdinalIgnoreCase)) { rel = rel[5..]; mods = true; }
+        mods |= rel.StartsWith("update", StringComparison.OrdinalIgnoreCase)
+                || rel.StartsWith("x64", StringComparison.OrdinalIgnoreCase)
+                || rel.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase);
+        return mods ? Path.Combine("mods", rel) : rel;
+    }
+
     private static bool IsTrue(string s) => bool.TryParse(s, out bool b) && b;
+
+    /// <summary>Progress weight of an operation: the bytes it installs (nested archives included).</summary>
+    private static long Weight(Ctx ctx, XmlElement op)
+    {
+        switch (op.Name.ToLowerInvariant())
+        {
+            case "add":
+                string source = op.GetAttribute("source");
+                long len = source.Length == 0 ? 0 : ctx.Package.Length(Ctx.ContentPath(source));
+                return Math.Max(len, 0) + 1;
+            case "archive":
+                return op.ChildNodes.OfType<XmlElement>().Sum(c => Weight(ctx, c));
+            case "defragmentation":
+                return 0;
+            default:
+                return OpWeight;
+        }
+    }
 
     // ---- top level ---------------------------------------------------------------------------
 
@@ -293,6 +440,7 @@ public static class OivInstaller
                 break;
             case "delete":
                 DiskDelete(ctx, op);
+                ctx.Done += OpWeight;
                 break;
             case "archive":
                 RunArchive(ctx, op, top: op.GetAttribute("path"), nested: new List<string>(),
@@ -301,13 +449,16 @@ public static class OivInstaller
             case "xml":
             case "text":
                 DiskEdit(ctx, op);
+                ctx.Done += OpWeight;
                 break;
             case "defragmentation":
                 break; // our edits never fragment beyond what the game reads fine
             default:
                 ctx.Result.Skipped.Add($"Unsupported operation <{op.Name}>");
+                ctx.Done += OpWeight;
                 break;
         }
+        ctx.Report();
     }
 
     private static void DiskAdd(Ctx ctx, XmlElement op)
@@ -316,11 +467,15 @@ public static class OivInstaller
         string dest = op.InnerText.Trim();
         if (source.Length == 0 || dest.Length == 0) { ctx.Result.Skipped.Add("<add> without source or destination"); return; }
 
-        string src = ctx.SafeContentPath(source);
-        if (!File.Exists(src)) throw new ModInstallException(ModInstallException.BadPackage, $"The package is missing {source}.");
+        string src = Ctx.ContentPath(source);
+        long len = ctx.Package.Length(src);
+        if (len < 0) throw new ModInstallException(ModInstallException.BadPackage, $"The package is missing {source}.");
 
         string rel = ctx.DiskTarget(dest);
-        LooseFileInstaller.CopyTracked(ctx.Record, src, rel);
+        ctx.Current = rel;
+        ctx.Report(force: true);
+        LooseFileInstaller.CopyTracked(ctx.Record, () => ctx.Package.OpenRead(src), rel);
+        ctx.Done += len + 1;
         ctx.Result.Applied.Add($"add {rel}");
     }
 
@@ -385,6 +540,7 @@ public static class OivInstaller
         if (type.Length > 0 && !type.Equals("RPF7", StringComparison.OrdinalIgnoreCase))
         {
             ctx.Result.Skipped.Add($"Archive type {type} is not supported ({node.GetAttribute("path")})");
+            ctx.Done += Weight(ctx, node);
             return;
         }
         if (string.IsNullOrWhiteSpace(top)) { ctx.Result.Skipped.Add("<archive> without path"); return; }
@@ -396,13 +552,27 @@ public static class OivInstaller
         // One editing session for this archive's own operations…
         if (fileOps.Count > 0 || create)
         {
-            bool topExisted = File.Exists(ModsArchives.ModsPath(ctx.GameFolder, topNorm));
+            // The game's archive is copied to mods\ first. A copy made right now still holds the
+            // game's own files: the game archive itself is their backup.
+            long copySize = ModsArchives.CopySize(ctx.GameFolder, topNorm);
+            if (copySize > 0) ctx.MarkFresh(topNorm);
+
+            ctx.Current = nested.Count == 0 ? topNorm : topNorm + " > " + string.Join(" > ", nested);
+            ctx.Copying = copySize > 0;
+            ctx.Report(force: true);
+            long start = ctx.Done, streamBase = 0;
+            var copied = new InlineProgress<long>(n => { ctx.Done = start + n; ctx.Report(); });
+            var written = new InlineProgress<long>(n => { ctx.Done = streamBase + n; ctx.Report(); });
             ArchiveChain.Edit(ctx.GameFolder, topNorm, nested, ed =>
             {
+                ctx.Copying = false;
+                ctx.Done = start + copySize;
+                ctx.Report(force: true);
                 foreach (var op in fileOps) RunArchiveOp(ctx, ed, topNorm, nested, op);
-                ctx.Recorder.Seal(topNorm, nested, ed);
-            }, createIfMissing: create);
-            TrackCreatedArchive(ctx, topNorm, topExisted);
+                streamBase = ctx.Done; // large files are counted while the commit copies them
+            }, createIfMissing: create, observer: ctx.Recorder.Observe(topNorm), written: written, copied: copied);
+            ctx.Done = start + copySize + fileOps.Sum(o => Weight(ctx, o));
+            ctx.Report(force: true);
         }
 
         // …then each nested archive in its own session.
@@ -414,22 +584,11 @@ public static class OivInstaller
         }
     }
 
-    /// <summary>
-    /// A brand-new archive the package created (createIfNotExist, no game original) belongs to the
-    /// mod: uninstall deletes it. Copies of game archives (mods\update\update.rpf…) are shared and
-    /// stay; the edits inside them are undone instead.
-    /// </summary>
-    private static void TrackCreatedArchive(Ctx ctx, string topNorm, bool existed)
-    {
-        if (existed || File.Exists(ModsArchives.GamePath(ctx.GameFolder, topNorm))) return;
-        string rel = Path.Combine("mods", topNorm.Replace('/', '\\'));
-        if (ctx.Record.Files.Any(f => string.Equals(f.Dest, rel, StringComparison.OrdinalIgnoreCase))) return;
-        ctx.Record.Files.Add(new InstalledFile { Dest = rel, WasCreated = true });
-    }
-
+    /// <summary>Applies one operation inside an archive (large files are streamed in at commit).</summary>
     private static void RunArchiveOp(Ctx ctx, RpfEditor ed, string top, List<string> nested, XmlElement op)
     {
         string where = nested.Count == 0 ? top : top + " > " + string.Join(" > ", nested);
+        bool vanilla = nested.Count == 0 && ctx.IsFresh(top);
         switch (op.Name.ToLowerInvariant())
         {
             case "add":
@@ -437,32 +596,37 @@ public static class OivInstaller
                 string source = op.GetAttribute("source");
                 string entry = op.InnerText.Trim().Replace('\\', '/').Trim('/');
                 if (source.Length == 0 || entry.Length == 0) { ctx.Result.Skipped.Add($"<add> without source or destination in {where}"); return; }
-                string src = ctx.SafeContentPath(source);
-                if (!File.Exists(src)) throw new ModInstallException(ModInstallException.BadPackage, $"The package is missing {source}.");
-                long size = new FileInfo(src).Length;
-                if (size > MaxArchiveEntryBytes)
+                string src = Ctx.ContentPath(source);
+                long size = ctx.Package.Length(src);
+                if (size < 0) throw new ModInstallException(ModInstallException.BadPackage, $"The package is missing {source}.");
+                if (size > uint.MaxValue)
                 {
                     ctx.Result.Skipped.Add($"{source} is too large to store inside an archive");
+                    ctx.Done += size + 1;
                     return;
                 }
-                ctx.Recorder.Touch(top, nested, ed, entry);
-                if (entry.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase)) ed.SetNestedArchive(entry, src);
-                else ed.SetFile(entry, File.ReadAllBytes(src));
+                ctx.Recorder.Touch(top, nested, ed, entry, vanilla);
+                ed.SetFileFrom(entry, size, () => ctx.Package.OpenRead(src));
                 ctx.Result.Applied.Add($"add {where}/{entry}");
-                break;
+                if (ed.IsStreamed(entry)) return;
+                ctx.Done += size + 1;
+                ctx.Report();
+                return;
             }
             case "delete":
             {
                 string entry = op.InnerText.Trim().Replace('\\', '/').Trim('/');
+                ctx.Done += OpWeight;
                 if (entry.Length == 0 || !ed.FileExists(entry)) return;
-                ctx.Recorder.Touch(top, nested, ed, entry);
+                ctx.Recorder.Touch(top, nested, ed, entry, vanilla);
                 ed.DeleteFile(entry);
                 ctx.Result.Applied.Add($"delete {where}/{entry}");
-                break;
+                return;
             }
             case "xml":
             case "text":
             {
+                ctx.Done += OpWeight;
                 string entry = op.GetAttribute("path").Replace('\\', '/').Trim('/');
                 bool xml = op.Name.Equals("xml", StringComparison.OrdinalIgnoreCase);
                 if (entry.Length == 0) { ctx.Result.Skipped.Add($"<{op.Name}> without path in {where}"); return; }
@@ -475,22 +639,23 @@ public static class OivInstaller
                 if (exists && !ed.IsBinary(entry)) { ctx.Result.Skipped.Add($"{entry} is a binary resource, not text"); return; }
 
                 string original = exists ? ed.ReadText(entry) : "";
-                var edit = ctx.Recorder.Touch(top, nested, ed, entry);
                 var journal = new EditJournal();
                 string updated = xml ? ApplyXmlOps(op, original, ctx.Result, journal) : ApplyTextOps(op, original, journal);
                 if (updated != original || !exists)
                 {
+                    var edit = ctx.Recorder.Touch(top, nested, ed, entry, vanilla);
                     ed.SetText(entry, updated);
                     if (!edit.WasCreated) edit.Journal = Merge(edit.Journal, journal);
                     ctx.Result.Applied.Add($"{op.Name} edit {where}/{entry}");
                 }
-                break;
+                return;
             }
             case "defragmentation":
-                break;
+                return;
             default:
                 ctx.Result.Skipped.Add($"Unsupported operation <{op.Name}> in {where}");
-                break;
+                ctx.Done += OpWeight;
+                return;
         }
     }
 

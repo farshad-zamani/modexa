@@ -19,6 +19,11 @@ public sealed class ArchiveEdit
     public bool WasCreated { get; set; }
     /// <summary>The original content (as read from the archive), saved under the mod's backup folder.</summary>
     public string? OriginalBackup { get; set; }
+    /// <summary>
+    /// The original is the game's own file (the archive was a fresh copy of the game's): nothing was
+    /// saved, the game archive itself is the backup.
+    /// </summary>
+    public bool OriginalInGame { get; set; }
     /// <summary>SHA-256 of the content right after the mod's change; null when the mod deleted the file.</summary>
     public string? WrittenSha256 { get; set; }
     /// <summary>The individual text/XML changes, undone one by one when the file was changed again since.</summary>
@@ -178,6 +183,7 @@ public sealed class ArchiveEditRecorder
 {
     private readonly ModInstallRecord _record;
     private readonly string _backupDir;
+    private readonly HashSet<ArchiveEdit> _unsealed = new();
 
     public ArchiveEditRecorder(ModInstallRecord record)
     {
@@ -185,36 +191,71 @@ public sealed class ArchiveEditRecorder
         _backupDir = ModBackups.DirFor(record);
     }
 
-    /// <summary>Call before the first change to <paramref name="entry"/> in this editing session.</summary>
-    public ArchiveEdit Touch(string archive, IReadOnlyList<string> nested, RpfEditor ed, string entry)
+    /// <summary>
+    /// Call before the first change to <paramref name="entry"/> in this editing session. The current
+    /// content is saved as the original — unless <paramref name="originalIsGame"/> says the archive
+    /// is a fresh copy of the game's, whose own archive then serves as the backup.
+    /// </summary>
+    public ArchiveEdit Touch(string archive, IReadOnlyList<string> nested, RpfEditor ed, string entry, bool originalIsGame = false)
     {
         string arch = ModsArchives.Normalize(archive);
         string ent = NormalizeEntry(entry);
         var existing = _record.ArchiveEdits.FirstOrDefault(e => Same(e, arch, nested, ent));
-        if (existing != null) return existing;
+        if (existing != null)
+        {
+            _unsealed.Add(existing);
+            return existing;
+        }
 
         var edit = new ArchiveEdit { Archive = arch, Nested = nested.Select(NormalizeEntry).ToList(), Entry = ent };
-        if (ed.FileExists(ent))
+        if (!ed.FileExists(ent))
+        {
+            edit.WasCreated = true;
+        }
+        else if (originalIsGame && nested.Count == 0)
+        {
+            edit.OriginalInGame = true;
+        }
+        else
         {
             AppPaths.EnsureDir(_backupDir);
             string bak = Path.Combine(_backupDir, Guid.NewGuid().ToString("N") + ".bak");
             File.WriteAllBytes(bak, ed.ReadFile(ent));
             edit.OriginalBackup = bak;
         }
-        else
-        {
-            edit.WasCreated = true;
-        }
         _record.ArchiveEdits.Add(edit);
+        _unsealed.Add(edit);
         return edit;
     }
 
-    /// <summary>Call after the session's changes are staged (before commit): fingerprints the result.</summary>
+    /// <summary>Fingerprints the entries touched since the last seal at this nesting level.</summary>
     public void Seal(string archive, IReadOnlyList<string> nested, RpfEditor ed)
     {
         string arch = ModsArchives.Normalize(archive);
-        foreach (var e in _record.ArchiveEdits.Where(e => e.Archive == arch && SameChain(e.Nested, nested)))
-            e.WrittenSha256 = ed.FileExists(e.Entry) ? Sha(ed.ReadFile(e.Entry)) : null;
+        foreach (var e in _unsealed.Where(e => e.Archive == arch && SameChain(e.Nested, nested)).ToList())
+        {
+            e.WrittenSha256 = ed.FileExists(e.Entry) ? ed.HashFile(e.Entry) : null;
+            _unsealed.Remove(e);
+        }
+    }
+
+    /// <summary>
+    /// An observer for <see cref="ArchiveChain"/> edits of <paramref name="archive"/>: records nested
+    /// archives the edit creates and seals each level right after it is written.
+    /// </summary>
+    public IArchiveChainObserver Observe(string archive) => new Observer(this, ModsArchives.Normalize(archive));
+
+    private sealed class Observer : IArchiveChainObserver
+    {
+        private readonly ArchiveEditRecorder _r;
+        private readonly string _archive;
+
+        public Observer(ArchiveEditRecorder r, string archive) { _r = r; _archive = archive; }
+
+        public void CreatingNested(IReadOnlyList<string> parentChain, RpfEditor parent, string innerPath)
+            => _r.Touch(_archive, parentChain, parent, innerPath);
+
+        public void Committed(IReadOnlyList<string> chain, RpfEditor ed) => _r.Seal(_archive, chain, ed);
     }
 
     // ---- revert --------------------------------------------------------------------------------
@@ -225,12 +266,39 @@ public sealed class ArchiveEditRecorder
     /// <summary>
     /// Undoes every archive edit of <paramref name="record"/>, newest first, one editing session per
     /// archive. <paramref name="later"/> are mods installed after it into the same game (oldest first).
-    /// Problems are added to <paramref name="errors"/>; successfully undone edits are marked.
+    /// Edits in <paramref name="released"/> archives are not undone one by one: those copies are
+    /// deleted as a whole afterwards. Problems are added to <paramref name="errors"/>; successfully
+    /// undone edits are marked.
     /// </summary>
-    public static void Revert(ModInstallRecord record, IReadOnlyList<ModInstallRecord> later, List<string> errors)
+    public static void Revert(ModInstallRecord record, IReadOnlyList<ModInstallRecord> later, List<string> errors,
+        ISet<string>? released = null, IProgress<string>? step = null)
     {
-        var pending = record.ArchiveEdits.Where(e => !e.Reverted).Reverse().ToList();
-        foreach (var g in pending.GroupBy(e => e.Archive + "|" + string.Join(">", e.Nested), StringComparer.OrdinalIgnoreCase))
+        // Archives going away entirely: nothing inside them needs undoing (the caller marks those
+        // edits once the copy is really deleted).
+        var pending = record.ArchiveEdits.Where(e => !e.Reverted && released?.Contains(e.Archive) != true).Reverse().ToList();
+
+        // Nested archives the mod created itself go away with everything inside them — unless a mod
+        // installed later put files in there too: then that mod takes the archive over.
+        var forceDelete = new HashSet<ArchiveEdit>();
+        foreach (var c in pending.Where(e => !e.Reverted && e.WasCreated && e.Entry.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase)))
+        {
+            var chain = c.Nested.Append(c.Entry).ToList();
+            var heir = later.FirstOrDefault(r => r.ArchiveEdits.Any(x => !x.Reverted && x.Archive == c.Archive && StartsWith(x.Nested, chain)));
+            if (heir == null)
+            {
+                forceDelete.Add(c);
+                foreach (var inner in pending.Where(x => x.Archive == c.Archive && StartsWith(x.Nested, chain))) inner.Reverted = true;
+            }
+            else
+            {
+                if (!heir.ArchiveEdits.Any(x => Same(x, c.Archive, c.Nested, c.Entry)))
+                    heir.ArchiveEdits.Add(new ArchiveEdit { Archive = c.Archive, Nested = c.Nested.ToList(), Entry = c.Entry, WasCreated = true });
+                c.Reverted = true;
+            }
+        }
+
+        foreach (var g in pending.Where(e => !e.Reverted)
+                     .GroupBy(e => e.Archive + "|" + string.Join(">", e.Nested), StringComparer.OrdinalIgnoreCase))
         {
             var first = g.First();
             if (!File.Exists(ModsArchives.ModsPath(record.GameFolder, first.Archive)))
@@ -238,11 +306,27 @@ public sealed class ArchiveEditRecorder
                 foreach (var e in g) e.Reverted = true; // the whole archive is gone (game reverted)
                 continue;
             }
+            step?.Report(first.Nested.Count == 0 ? first.Archive : first.Archive + " > " + string.Join(" > ", first.Nested));
+            RpfEditor? game = null;
             try
             {
+                // Originals of a fresh copy are read back from the game's own archive.
+                byte[]? Original(ArchiveEdit e)
+                {
+                    if (e.OriginalBackup != null && File.Exists(e.OriginalBackup)) return File.ReadAllBytes(e.OriginalBackup);
+                    if (!e.OriginalInGame || e.Nested.Count > 0) return null;
+                    if (game == null)
+                    {
+                        string path = ModsArchives.GamePath(record.GameFolder, e.Archive);
+                        bool open = RpfArchive.PeekEncryption(path) is Rpf7.EncryptionOpen or Rpf7.EncryptionNone;
+                        game = RpfEditor.OpenGameArchive(path, open ? null : GtaKeys.Load(record.GameFolder));
+                    }
+                    return game.FileExists(e.Entry) ? game.ReadFile(e.Entry) : null;
+                }
+
                 ArchiveChain.Edit(record.GameFolder, first.Archive, first.Nested, ed =>
                 {
-                    foreach (var e in g) RevertOne(ed, e, record, later);
+                    foreach (var e in g) RevertOne(ed, e, later, Original, forceDelete.Contains(e));
                 });
                 foreach (var e in g) e.Reverted = true;
             }
@@ -251,19 +335,33 @@ public sealed class ArchiveEditRecorder
                 Log.Error($"Uninstall: archive edits in {first.Archive}", ex);
                 errors.Add($"{first.Archive}: {ex.Message}");
             }
+            finally
+            {
+                game?.Dispose();
+            }
         }
     }
 
-    private static void RevertOne(RpfEditor ed, ArchiveEdit e, ModInstallRecord record, IReadOnlyList<ModInstallRecord> later)
+    private static bool StartsWith(IReadOnlyList<string> chain, IReadOnlyList<string> prefix)
+        => chain.Count >= prefix.Count && SameChain(chain.Take(prefix.Count).ToList(), prefix);
+
+    private static void RevertOne(RpfEditor ed, ArchiveEdit e, IReadOnlyList<ModInstallRecord> later,
+        Func<ArchiveEdit, byte[]?> original, bool forceDelete)
     {
         bool exists = ed.FileExists(e.Entry);
-        string? current = exists ? Sha(ed.ReadFile(e.Entry)) : null;
+        if (forceDelete)
+        {
+            if (exists) ed.DeleteFile(e.Entry);
+            return;
+        }
+        string? current = exists ? ed.HashFile(e.Entry) : null;
 
         if (current == e.WrittenSha256)
         {
             // Nobody touched it since: restore exactly.
             if (e.WasCreated) { if (exists) ed.DeleteFile(e.Entry); }
-            else if (e.OriginalBackup != null && File.Exists(e.OriginalBackup)) ed.SetFile(e.Entry, File.ReadAllBytes(e.OriginalBackup));
+            else if (original(e) is { } bytes) ed.SetFile(e.Entry, bytes);
+            else Log.Info($"Uninstall: no original for {e.Archive}/{e.Entry}; left as is.");
             return;
         }
 
@@ -274,6 +372,7 @@ public sealed class ArchiveEditRecorder
         if (heir.x != null && (journal == null || journal.IsEmpty))
         {
             heir.x.WasCreated = e.WasCreated;
+            heir.x.OriginalInGame = e.OriginalInGame;
             heir.x.OriginalBackup = ModBackups.HandOver(e.OriginalBackup, heir.r);
             e.OriginalBackup = null;
             return;
@@ -283,9 +382,10 @@ public sealed class ArchiveEditRecorder
         if (journal != null && !journal.IsEmpty)
         {
             string? text = journal.Undo(ed.ReadText(e.Entry));
-            // Back to exactly what we saved (other mods' edits already taken out)? Then restore the
-            // saved bytes — same content, original formatting.
-            if (text != null && ModBackups.SameText(e.OriginalBackup, text)) ed.SetFile(e.Entry, File.ReadAllBytes(e.OriginalBackup!));
+            // Back to exactly the original (other mods' edits already taken out)? Then restore the
+            // original bytes — same content, original formatting.
+            byte[]? orig = text != null ? original(e) : null;
+            if (text != null && orig != null && ModBackups.SameText(orig, text)) ed.SetFile(e.Entry, orig);
             else if (text != null) ed.SetText(e.Entry, text);
 
             // Later mods saved this file *with* our edits as "their original": take our edits out of
@@ -310,8 +410,6 @@ public sealed class ArchiveEditRecorder
 
     private static bool SameChain(IReadOnlyList<string> a, IReadOnlyList<string> b)
         => a.Count == b.Count && a.Zip(b).All(p => string.Equals(NormalizeEntry(p.First), NormalizeEntry(p.Second), StringComparison.OrdinalIgnoreCase));
-
-    private static string Sha(byte[] data) => Convert.ToHexString(SHA256.HashData(data));
 }
 
 /// <summary>Serializes an XmlDocument back to text the way the game files are written (UTF-8, no re-indent).</summary>

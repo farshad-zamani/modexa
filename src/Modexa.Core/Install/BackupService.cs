@@ -11,6 +11,11 @@ public sealed class BackupEntry
     public string? OriginalBackup { get; set; }
     public bool WasCreated { get; set; }
 
+    /// <summary>
+    /// For an archive copy Modexa created in mods\: its <see cref="FileStamp"/> after Modexa's last
+    /// write. A different stamp means another tool changed it since (then it is never deleted silently).
+    /// </summary>
+    public string? WrittenStamp { get; set; }
 
     /// <summary>For a file replaced INSIDE an archive: its path there (original content in <see cref="OriginalBackup"/>).</summary>
     public string? ArchiveEntryPath { get; set; }
@@ -158,6 +163,42 @@ public sealed class BackupSession
     }
 
     public bool HasBackups => _entries.Count > 0;
+
+    private BackupEntry? CreatedEntry(string relativePath)
+        => _entries.FirstOrDefault(e => !e.IsArchiveEntry && e.WasCreated
+                                        && string.Equals(e.RelativePath, relativePath, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>True when Modexa created this file (game-relative path, e.g. mods\update\update.rpf).</summary>
+    public bool Created(string relativePath) => CreatedEntry(relativePath) != null;
+
+    /// <summary>The stamp recorded after Modexa's last write to a file it created (null = unknown).</summary>
+    public string? StampOf(string relativePath) => CreatedEntry(relativePath)?.WrittenStamp;
+
+    /// <summary>Records the current stamp of a file Modexa created (call after every write to it).</summary>
+    public void Restamp(string relativePath)
+    {
+        var e = CreatedEntry(relativePath);
+        if (e == null) return;
+        e.WrittenStamp = FileStamp.Of(Path.Combine(_gameFolder, relativePath));
+        Save();
+    }
+
+    /// <summary>Stops tracking a created file (it was deleted again).</summary>
+    public void Forget(string relativePath)
+    {
+        if (_entries.RemoveAll(e => !e.IsArchiveEntry && e.WasCreated
+                                    && string.Equals(e.RelativePath, relativePath, StringComparison.OrdinalIgnoreCase)) > 0)
+            Save();
+    }
+
+    /// <summary>Game-relative paths of the files Modexa created (oldest first).</summary>
+    public IReadOnlyList<string> CreatedFiles()
+        => _entries.Where(e => !e.IsArchiveEntry && e.WasCreated).Select(e => e.RelativePath).ToList();
+
+    /// <summary>True when files inside this archive were changed through the backup log (older prepare data).</summary>
+    public bool HasEntriesInside(string archiveRelativePath)
+        => _entries.Any(e => e.IsArchiveEntry && string.Equals(
+            e.RelativePath.Replace('/', '\\'), archiveRelativePath.Replace('/', '\\'), StringComparison.OrdinalIgnoreCase));
 
     private void Save()
     {

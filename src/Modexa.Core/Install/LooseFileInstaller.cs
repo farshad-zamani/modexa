@@ -11,7 +11,8 @@ namespace Modexa.Core.Install;
 /// </summary>
 public static class LooseFileInstaller
 {
-    public static ModInstallRecord Install(MxaManifest manifest, string extractedDir, string gameFolder, string game)
+    public static ModInstallRecord Install(MxaManifest manifest, string extractedDir, string gameFolder, string game,
+        IProgress<OivProgress>? progress = null)
     {
         if (!Directory.Exists(gameFolder)) throw new DirectoryNotFoundException(gameFolder);
 
@@ -21,23 +22,28 @@ public static class LooseFileInstaller
             ModType = manifest.ModType,
             Game = game,
             GameFolder = gameFolder,
-            DlcName = manifest.DlcName
+            DlcName = manifest.AllDlcs.FirstOrDefault(),
+            DlcNames = manifest.AllDlcs.ToList()
         };
 
         string root = Path.GetFullPath(gameFolder).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var sources = manifest.Files.Select(e => (entry: e, src: Path.GetFullPath(Path.Combine(extractedDir, e.Source)))).ToList();
+        long total = sources.Sum(s => File.Exists(s.src) ? new FileInfo(s.src).Length : 0), done = 0;
         try
         {
-            foreach (var entry in manifest.Files)
+            foreach (var (entry, src) in sources)
             {
-                string src = Path.GetFullPath(Path.Combine(extractedDir, entry.Source));
                 string dest = Path.GetFullPath(Path.Combine(gameFolder, entry.Dest));
 
                 // Zip-slip guard.
                 if (!dest.StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue;
                 if (!File.Exists(src)) continue;
 
+                progress?.Report(new OivProgress(done, total, entry.Dest));
                 CopyTracked(record, src, entry.Dest);
+                done += new FileInfo(src).Length;
             }
+            progress?.Report(new OivProgress(total, total, null));
         }
         catch
         {
@@ -60,6 +66,25 @@ public static class LooseFileInstaller
         InstallDirs.EnsureFor(record, record.GameFolder, dest);
         File.Copy(source, dest, true);
         rec.WrittenStamp = FileStamp.Of(dest);
+    }
+
+    /// <summary>Like <see cref="CopyTracked(ModInstallRecord,string,string)"/>, from a stream (e.g. a zip entry).</summary>
+    public static void CopyTracked(ModInstallRecord record, Func<Stream> open, string destRel)
+    {
+        string dest = Path.Combine(record.GameFolder, destRel);
+        var rec = Track(record, destRel);
+        InstallDirs.EnsureFor(record, record.GameFolder, dest);
+        using (var src = open())
+        using (var dst = new FileStream(dest, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20))
+            src.CopyTo(dst, 1 << 20);
+        rec.WrittenStamp = FileStamp.Of(dest);
+    }
+
+    /// <summary>Records a file the caller has just written (or is about to write) and fingerprints it.</summary>
+    public static void Stamp(ModInstallRecord record, string destRel)
+    {
+        var rec = record.Files.FirstOrDefault(f => string.Equals(f.Dest, destRel, StringComparison.OrdinalIgnoreCase));
+        if (rec != null) rec.WrittenStamp = FileStamp.Of(Path.Combine(record.GameFolder, destRel));
     }
 
     /// <summary>Records a disk file before the mod changes it (original saved once per mod).</summary>
@@ -135,6 +160,10 @@ public static class LooseFileInstaller
 
     private static void RevertFile(ModInstallRecord record, InstalledFile f, string full, IReadOnlyList<ModInstallRecord> later)
     {
+        // "Clean launch" parks loader DLLs under another name: put the file back first.
+        string parked = full + Prepare.CleanLaunchService.DisabledSuffix;
+        if (!File.Exists(full) && File.Exists(parked)) File.Move(parked, full);
+
         string? current = FileStamp.Of(full);
         // Unchanged since the mod wrote (or deleted) it? (No stamp = a created archive the mod owns.)
         bool untouched = f.WasDeleted ? current == null : f.WrittenStamp == null || current == f.WrittenStamp;

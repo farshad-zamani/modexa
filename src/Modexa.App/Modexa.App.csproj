@@ -7,7 +7,8 @@
     <AssemblyName>Modexa</AssemblyName>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
-    <!-- ApplicationIcon set once assets\modexa.ico exists (generated in the design pass). -->
+    <!-- The turquoise "M" tile from the title bar (assets\icon\modexa.ico, 16-256 px). -->
+    <ApplicationIcon>assets\icon\modexa.ico</ApplicationIcon>
 
     <!-- Hardened single-file release knobs (mirrors the Backup Manager). -->
     <SelfContained>true</SelfContained>
@@ -32,13 +33,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- App icon is optional at dev time; guard so the build doesn't fail before art exists. -->
-    <Content Include="assets\modexa.ico" Condition="Exists('assets\modexa.ico')" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- Bundled OFL fonts, embedded as WPF resources for pack:// access. -->
+    <!-- Bundled OFL fonts, the window icon and the shop banners, embedded as WPF resources (pack://). -->
     <Resource Include="assets\fonts\*.ttf" />
+    <Resource Include="assets\icon\modexa.ico" />
+    <Resource Include="assets\promo\*.jpg" />
   </ItemGroup>
 
 </Project>

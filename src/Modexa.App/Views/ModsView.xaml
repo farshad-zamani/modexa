@@ -1,10 +1,11 @@
 <UserControl x:Class="Modexa.App.Views.ModsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Modexa.App.Views"
              xmlns:i18n="clr-namespace:Modexa.Core.I18n;assembly=Modexa.Core">
 
-    <!-- My Mods: every mod installed on every game, in one place. View-only; with Pro the list also
-         offers management (uninstall, open the game folder). Installing happens on each game's page. -->
+    <!-- My Mods: everything installed on every game (mods and prepare steps), in one place, each with
+         its uninstall button. Installing happens on each game's page. -->
     <Grid Background="Transparent">
         <ScrollViewer Style="{StaticResource PageScroll}">
             <StackPanel Style="{StaticResource PageContent}">
@@ -103,17 +104,7 @@
             </StackPanel>
         </ScrollViewer>
 
-        <!-- ===== Busy overlay ===== -->
-        <Grid x:Name="Overlay" Background="{DynamicResource Scrim}" Visibility="Collapsed">
-            <Border Style="{StaticResource Card}" Width="400" Padding="28,26"
-                    HorizontalAlignment="Center" VerticalAlignment="Center">
-                <StackPanel>
-                    <TextBlock Style="{StaticResource Display.H2}" HorizontalAlignment="Center"
-                               TextAlignment="Center" TextWrapping="Wrap"
-                               Text="{Binding [Mods_Uninstalling], Source={x:Static i18n:Loc.Instance}}"/>
-                    <ProgressBar x:Name="OverlayBar" Margin="0,20,0,4"/>
-                </StackPanel>
-            </Border>
-        </Grid>
+        <!-- ===== Progress card ===== -->
+        <local:BusyOverlay x:Name="Busy"/>
     </Grid>
 </UserControl>

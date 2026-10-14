@@ -8,14 +8,13 @@ namespace Modexa.Core.Remote;
 public sealed record UpdateInfo(bool Available, string? LatestVersion, string? Url, string? Notes);
 
 /// <summary>
-/// Checks GitHub Releases for a newer version of the public (Free) build. The repo name is a
-/// placeholder until the client confirms it. Any failure (offline, rate-limited) returns
-/// "no update" silently.
+/// Checks GitHub Releases (github.com/farshad-zamani/modexa) for a newer version of the public
+/// (Free) build. Any failure (offline, rate-limited) returns "no update" silently.
 /// </summary>
 public static class UpdateChecker
 {
     private const string Owner = "farshad-zamani";
-    private const string Repo = "modexa"; // TODO: confirm final public repo name with the client.
+    private const string Repo = "modexa";
     private const string UserAgent = "Modexa-Updater";
 
     public static async Task<UpdateInfo> CheckAsync()

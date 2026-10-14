@@ -1,4 +1,5 @@
-﻿using System.IO;
+using System.Globalization;
+using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
 using System.Reflection;
@@ -39,7 +40,10 @@ public sealed class PrepareVersionException : Exception
 
 public enum PreparePhase { Downloading, Verifying, PreparingArchive, Extracting, Installing, Done }
 
-public readonly record struct PrepareProgress(PreparePhase Phase, int? Percent);
+/// <summary>Prepare progress: the phase, its percentage, and (when known) bytes done of total and the item.</summary>
+/// <param name="Cached">Downloading phase only: the copy downloaded earlier is still current and is reused.</param>
+public readonly record struct PrepareProgress(PreparePhase Phase, int? Percent, long Done = 0, long Total = 0, string? Item = null,
+    bool Cached = false);
 
 /// <summary>What happened to gameconfig.xml (it lives inside mods\update\update.rpf).</summary>
 public enum GameConfigOutcome
@@ -56,7 +60,7 @@ public sealed record PrepareResult(
     int FilesInstalled,
     GameConfigOutcome GameConfig,
     string? GameConfigVariant,
-    int? ConfigBuild,
+    string? ConfigFor,
     bool BuildMismatch,
     string? VersionWarning = null,
     bool ModsRpfCreated = false,
@@ -98,9 +102,15 @@ public sealed class PrepareService
         if (bundle == null || string.IsNullOrWhiteSpace(bundle.Url))
             throw new PrepareNotConfiguredException(step);
 
-        // 1) Download (or reuse the cached copy).
-        string archive = await BundleCache.GetAsync(bundle, new Progress<int>(p =>
-            progress?.Report(new PrepareProgress(PreparePhase.Downloading, p))), ct);
+        // 1) Download — only when the server copy changed since the last download.
+        string packName = Path.GetFileName(Uri.UnescapeDataString(new Uri(bundle.Url!).AbsolutePath));
+        var (archive, cached) = await BundleCache.GetAsync(bundle, new Progress<DownloadProgress>(p =>
+            progress?.Report(new PrepareProgress(PreparePhase.Downloading, p.Percent, p.BytesReceived, p.TotalBytes ?? 0, packName))), ct);
+        if (cached)
+        {
+            long len = new FileInfo(archive).Length;
+            progress?.Report(new PrepareProgress(PreparePhase.Downloading, 100, len, len, packName, Cached: true));
+        }
 
         // 2) Verify the pack has what we expect, resolve version folders, find gameconfig variants.
         progress?.Report(new PrepareProgress(PreparePhase.Verifying, null));
@@ -110,13 +120,26 @@ public sealed class PrepareService
             if (!files.Any(f => Matches(map, f)))
                 throw new PrepareLayoutException(map.From);
 
-        string? variant = null;
+        string? variant = null, configFolder = null, configFor = null;
+        bool mismatch = false;
         var outcome = GameConfigOutcome.NotApplicable;
         if (bundle.GameConfig is { } gc)
         {
-            var variants = GameConfigVariants(files, gc.Folder);
-            if (variants.Count == 0) throw new PrepareLayoutException(gc.Folder);
+            // The config made for this exact build (or its family, e.g. "1.0.35" for 35xx).
+            var pick = GameConfigVersions.Pick(files, gc, build)
+                       ?? throw new PrepareLayoutException(gc.VersionsRoot ?? gc.Folder);
+            configFolder = pick.Folder;
+            configFor = pick.ForBuild;
+            mismatch = !pick.Matches;
+            var variants = GameConfigVariants(files, configFolder)
+                .Where(v => !gc.Exclude.Any(x => v.Contains(x, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+            if (variants.Count == 0) throw new PrepareLayoutException(configFolder);
+            // Default: the game's own traffic ("Stock Traffic …"), unchanged.
             string? def = variants.FirstOrDefault(v => string.Equals(v, gc.Default, StringComparison.OrdinalIgnoreCase))
+                          ?? variants.FirstOrDefault(v => !string.IsNullOrEmpty(gc.Default)
+                                                          && v.Split('/')[^1].StartsWith(gc.Default!, StringComparison.OrdinalIgnoreCase))
+                          ?? variants.FirstOrDefault(v => v.Split('/')[^1].StartsWith("Stock", StringComparison.OrdinalIgnoreCase))
                           ?? variants[0];
             // Back on the caller's (UI) context here: no ConfigureAwait(false) above this line.
             variant = chooseVariant != null ? await chooseVariant(variants, def) : def;
@@ -129,12 +152,20 @@ public sealed class PrepareService
         ModsArchiveException? modsRpfError = null;
         if (variant != null && bundle.GameConfig != null && !await Task.Run(() => ModsArchives.IsReady(gameFolder), ct))
         {
-            progress?.Report(new PrepareProgress(PreparePhase.PreparingArchive, 0));
             bool had = File.Exists(ModsArchives.ModsPath(gameFolder, ModsArchives.UpdateRpf));
-            var copyProgress = new Progress<int>(p => progress?.Report(new PrepareProgress(PreparePhase.PreparingArchive, p)));
+            long size = await Task.Run(() => ModsArchives.CopySize(gameFolder, ModsArchives.UpdateRpf), ct);
+            const string item = "mods\\update\\update.rpf";
+            progress?.Report(new PrepareProgress(PreparePhase.PreparingArchive, 0, 0, size, item));
+            long last = 0;
+            var copied = new Progress<long>(n =>
+            {
+                if (n - last < (16 << 20) && n < size) return;
+                last = n;
+                progress?.Report(new PrepareProgress(PreparePhase.PreparingArchive, size > 0 ? (int)(n * 100 / size) : null, n, size, item));
+            });
             try
             {
-                await Task.Run(() => ModsArchives.EnsureOpen(gameFolder, ModsArchives.UpdateRpf, copyProgress, ct), ct);
+                await Task.Run(() => ModsArchives.EnsureOpen(gameFolder, ModsArchives.UpdateRpf, null, ct, copied: copied), ct);
                 modsRpfCreated = !had;
             }
             catch (ModsArchiveException ex)
@@ -144,59 +175,115 @@ public sealed class PrepareService
             }
         }
 
-        // 4) Extract + install on a worker thread.
+        // 4) Extract + install on a worker thread. The step is an installed item of its own (listed
+        //    with the mods, removable on its own); a re-run updates the same record, so its saved
+        //    originals stay the true originals.
         progress?.Report(new PrepareProgress(PreparePhase.Extracting, 0));
         string stagedConfig = Path.Combine(AppPaths.CacheDir, "staging", Guid.NewGuid().ToString("N") + ".xml");
+        AppPaths.EnsureDir(Path.GetDirectoryName(stagedConfig)!);
         string? configSource = variant != null && bundle.GameConfig != null
-            ? $"{bundle.GameConfig.Folder.TrimEnd('/')}/{variant}/gameconfig.xml"
+            ? $"{configFolder}/{variant}/gameconfig.xml"
             : null;
 
-        var installed = await Task.Run(() =>
+        var record = InstalledModsStore.ForFolder(gameFolder).FirstOrDefault(r => r.Setup == step)
+                     ?? new ModInstallRecord
+                     {
+                         Name = StepName(game, step),
+                         ModType = Format.MxaModType.Loose,
+                         Game = GameKey(game),
+                         GameTitle = GameCatalog.Get(game).DisplayName,
+                         GameFolder = gameFolder,
+                         Setup = step,
+                         Author = "WTMod.com",
+                         InstalledUtc = DateTime.UtcNow
+                     };
+        record.Source = Path.GetFileName(archive);
+        if (modsRpfCreated && !record.CreatedArchives.Contains(ModsArchives.UpdateRpf, StringComparer.OrdinalIgnoreCase))
+            record.CreatedArchives.Add(ModsArchives.UpdateRpf);
+
+        (int count, GameConfigOutcome gcOutcome) installed;
+        try
         {
-            var backup = new BackupSession(gameFolder);
-            string root = Path.GetFullPath(gameFolder) + Path.DirectorySeparatorChar;
-
-            foreach (var dir in bundle.CreateDirs)
-                Directory.CreateDirectory(Path.Combine(gameFolder, dir));
-
-            int count = BundleArchive.Extract(archive, bundle.Password, key =>
+            installed = await Task.Run(() =>
             {
-                if (configSource != null && string.Equals(key, configSource, StringComparison.OrdinalIgnoreCase))
-                    return stagedConfig;
+                string root = Path.GetFullPath(gameFolder) + Path.DirectorySeparatorChar;
+                foreach (var dir in bundle.CreateDirs)
+                    InstallDirs.EnsureFor(record, gameFolder, Path.Combine(gameFolder, dir, "_"));
 
-                string? rel = Destination(maps, bundle.GameConfig, key);
-                if (rel == null) return null;
-                string full = Path.GetFullPath(Path.Combine(gameFolder, rel));
-                if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return null; // zip-slip guard
-                backup.TrackBeforeWrite(rel.Replace('/', Path.DirectorySeparatorChar));
-                return full;
-            }, new Progress<int>(p => progress?.Report(new PrepareProgress(PreparePhase.Extracting, p))), ct);
+                var written = new List<string>();
+                int count = BundleArchive.Extract(archive, bundle.Password, key =>
+                {
+                    if (configSource != null && string.Equals(key, configSource, StringComparison.OrdinalIgnoreCase))
+                        return stagedConfig;
 
-            progress?.Report(new PrepareProgress(PreparePhase.Installing, null));
-            if (bundle.OpenIv) count += InstallOpenIv(gameFolder, backup);
-            if (bundle.ModexaAsi && InstallModexaAsi(gameFolder, backup)) count++;
+                    string? rel = Destination(maps, bundle.GameConfig, key);
+                    if (rel == null) return null;
+                    string full = Path.GetFullPath(Path.Combine(gameFolder, rel));
+                    if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return null; // zip-slip guard
+                    string relWin = rel.Replace('/', Path.DirectorySeparatorChar);
+                    LooseFileInstaller.Track(record, relWin);
+                    InstallDirs.EnsureFor(record, gameFolder, full);
+                    written.Add(relWin);
+                    return full;
+                }, new Progress<int>(p => progress?.Report(new PrepareProgress(PreparePhase.Extracting, p))), ct);
+                foreach (var rel in written) LooseFileInstaller.Stamp(record, rel);
 
-            var gcOutcome = GameConfigOutcome.NotApplicable;
-            if (configSource != null)
-            {
-                gcOutcome = File.Exists(stagedConfig)
-                    ? ApplyGameConfig(gameFolder, File.ReadAllBytes(stagedConfig), backup)
-                    : throw new PrepareLayoutException(configSource);
-                try { File.Delete(stagedConfig); } catch { }
-            }
-            return (count, gcOutcome);
-        }, ct);
+                progress?.Report(new PrepareProgress(PreparePhase.Installing, null));
+                if (bundle.OpenIv) count += InstallOpenIv(gameFolder, record);
+                if (bundle.ModexaAsi && InstallModexaAsi(gameFolder, record)) count++;
+
+                var gcOutcome = GameConfigOutcome.NotApplicable;
+                if (configSource != null)
+                {
+                    gcOutcome = File.Exists(stagedConfig)
+                        ? ApplyGameConfig(gameFolder, File.ReadAllBytes(stagedConfig), record)
+                        : throw new PrepareLayoutException(configSource);
+                    try { File.Delete(stagedConfig); } catch { }
+                }
+                if (variant != null && gcOutcome == GameConfigOutcome.Applied) record.Version = variant;
+                return (count, gcOutcome);
+            }, ct);
+        }
+        finally
+        {
+            // Whatever was written is on record (even after a cancel), so it can always be removed.
+            if (record.Files.Count > 0 || record.ArchiveEdits.Count > 0 || record.CreatedDirs.Count > 0)
+                InstalledModsStore.Add(record);
+        }
 
         if (outcome != GameConfigOutcome.Skipped) outcome = installed.gcOutcome;
         progress?.Report(new PrepareProgress(PreparePhase.Done, 100));
 
-        int? forBuild = bundle.GameConfig?.ForBuild;
-        bool mismatch = forBuild is > 0 && build > 0 && forBuild != build;
-        // A gameconfig that couldn't be placed yet isn't "installed": keep the step open for a re-run.
-        if (outcome is GameConfigOutcome.NotApplicable or GameConfigOutcome.Applied)
-            PrepareState.MarkDone(gameFolder, step, variant);
-        return new PrepareResult(installed.count, outcome, variant, forBuild, mismatch, versionWarning, modsRpfCreated, modsRpfError);
+        return new PrepareResult(installed.count, outcome, variant, configFor, mismatch && build > 0, versionWarning, modsRpfCreated, modsRpfError);
     }
+
+    /// <summary>The prepare steps installed in a game folder (a GameConfig step counts once its gameconfig.xml is in place).</summary>
+    public static Dictionary<PrepareStep, ModInstallRecord> InstalledSteps(string gameFolder)
+    {
+        var map = new Dictionary<PrepareStep, ModInstallRecord>();
+        foreach (var r in InstalledModsStore.ForFolder(gameFolder))
+            if (r.Setup is { } s && (s != PrepareStep.GameConfig || r.ArchiveEdits.Any(e => !e.Reverted)))
+                map[s] = r;
+        return map;
+    }
+
+    private static string StepName(GameId game, PrepareStep step) => step switch
+    {
+        PrepareStep.GameConfig => "GameConfig",
+        PrepareStep.Menu => "Menyoo",
+        _ => "Mod Runner"
+    };
+
+    private static string GameKey(GameId game) => game switch
+    {
+        GameId.GtaV or GameId.GtaVEnhanced => "GtaV",
+        GameId.GtaSanAndreas => "GtaSa",
+        GameId.GtaIV => "GtaIV",
+        GameId.RedDeadRedemption1 => "Rdr1",
+        GameId.RedDeadRedemption2 => "Rdr2",
+        GameId.Cyberpunk2077 => "Cp2077",
+        _ => game.ToString()
+    };
 
     // ---- version-folder resolution ---------------------------------------------------------------
 
@@ -251,8 +338,11 @@ public sealed class PrepareService
     private static string NormVersion(string s)
         => new string(s.ToLowerInvariant().Where(c => char.IsLetterOrDigit(c) || c == '.').ToArray());
 
-    /// <summary>Writes gameconfig.xml into an OPEN mods\update\update.rpf (the original is backed up).</summary>
-    public static GameConfigOutcome ApplyGameConfig(string gameFolder, byte[] xml, BackupSession backup)
+    /// <summary>
+    /// Writes gameconfig.xml into an OPEN mods\update\update.rpf, recorded on the step's record (the
+    /// original is the game's own when the copy was made for this step, else it is saved).
+    /// </summary>
+    public static GameConfigOutcome ApplyGameConfig(string gameFolder, byte[] xml, ModInstallRecord record)
     {
         string rpfPath = Path.Combine(gameFolder, ModsUpdateRpf.Replace('/', Path.DirectorySeparatorChar));
         if (!File.Exists(rpfPath)) return GameConfigOutcome.NeedsModsUpdateRpf;
@@ -260,13 +350,15 @@ public sealed class PrepareService
         uint? enc = RpfArchive.PeekEncryption(rpfPath);
         if (enc is not (Rpf7.EncryptionOpen or Rpf7.EncryptionNone)) return GameConfigOutcome.UpdateRpfEncrypted;
 
-        var ed = RpfEditor.Open(rpfPath);
-        if (!ed.FileExists(GameConfigEntry)) return GameConfigOutcome.NoGameConfigEntry;
-
-        backup.TrackArchiveFile(ModsUpdateRpf, GameConfigEntry, ed.ReadFile(GameConfigEntry));
-        ed.SetFile(GameConfigEntry, xml);
-        ed.Commit();
-        return GameConfigOutcome.Applied;
+        bool fresh = record.CreatedArchives.Contains(ModsArchives.UpdateRpf, StringComparer.OrdinalIgnoreCase);
+        var recorder = new ArchiveEditRecorder(record);
+        return ArchiveChain.Edit(gameFolder, ModsArchives.UpdateRpf, Array.Empty<string>(), ed =>
+        {
+            if (!ed.FileExists(GameConfigEntry)) return GameConfigOutcome.NoGameConfigEntry;
+            recorder.Touch(ModsArchives.UpdateRpf, Array.Empty<string>(), ed, GameConfigEntry, originalIsGame: fresh);
+            ed.SetFile(GameConfigEntry, xml);
+            return GameConfigOutcome.Applied;
+        }, observer: recorder.Observe(ModsArchives.UpdateRpf));
     }
 
     /// <summary>State of mods\update\update.rpf (the editable copy add-ons and gameconfig need).</summary>
@@ -317,13 +409,12 @@ public sealed class PrepareService
     // ---- Modexa.asi ------------------------------------------------------------------------------
 
     /// <summary>Copies the embedded Modexa.asi (paid-mod entitlement gate) into the game root.</summary>
-    private static bool InstallModexaAsi(string gameFolder, BackupSession backup)
+    private static bool InstallModexaAsi(string gameFolder, ModInstallRecord record)
     {
-        using var res = Assembly.GetExecutingAssembly().GetManifestResourceStream("Modexa.Core.Assets.Modexa.asi");
-        if (res == null) return false; // public builds without the compiled gate
-        backup.TrackBeforeWrite("Modexa.asi");
-        using var fs = File.Create(Path.Combine(gameFolder, "Modexa.asi"));
-        res.CopyTo(fs);
+        if (Assembly.GetExecutingAssembly().GetManifestResourceInfo("Modexa.Core.Assets.Modexa.asi") == null)
+            return false; // public builds without the compiled gate
+        LooseFileInstaller.CopyTracked(record,
+            () => Assembly.GetExecutingAssembly().GetManifestResourceStream("Modexa.Core.Assets.Modexa.asi")!, "Modexa.asi");
         return true;
     }
 
@@ -332,20 +423,19 @@ public sealed class PrepareService
     /// root. For GTA V Legacy this is what makes the game read from the mods\ folder. Returns the
     /// number of files written.
     /// </summary>
-    private static int InstallOpenIv(string gameFolder, BackupSession backup)
+    private static int InstallOpenIv(string gameFolder, ModInstallRecord record)
     {
         using var res = Assembly.GetExecutingAssembly().GetManifestResourceStream("Modexa.Core.Assets.OpenIVFiles.zip");
         if (res == null) return 0;
         using var zip = new ZipArchive(res, ZipArchiveMode.Read);
+        string root = Path.GetFullPath(gameFolder) + Path.DirectorySeparatorChar;
         int n = 0;
         foreach (var entry in zip.Entries)
         {
             if (string.IsNullOrEmpty(entry.Name)) continue;
             string rel = entry.FullName.Replace('/', Path.DirectorySeparatorChar);
-            backup.TrackBeforeWrite(rel);
-            string dest = Path.Combine(gameFolder, rel);
-            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-            entry.ExtractToFile(dest, overwrite: true);
+            if (!Path.GetFullPath(Path.Combine(gameFolder, rel)).StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue;
+            LooseFileInstaller.CopyTracked(record, entry.Open, rel);
             n++;
         }
         return n;
@@ -353,12 +443,11 @@ public sealed class PrepareService
 
     // ---- revert ----------------------------------------------------------------------------------
 
-    /// <summary>Reverts everything Modexa installed into a game folder, restoring vanilla files.</summary>
-    public static void Revert(string gameFolder)
-    {
-        new BackupSession(gameFolder).RevertAll();
-        PrepareState.Clear(gameFolder);
-    }
+    /// <summary>
+    /// After every installed item was uninstalled: removes what is left of Modexa in the game folder
+    /// (archive copies it made, files tracked by older versions), restoring vanilla files.
+    /// </summary>
+    public static void Revert(string gameFolder) => new BackupSession(gameFolder).RevertAll();
 
     public static bool HasBackups(string gameFolder) => new BackupSession(gameFolder).HasBackups;
 }
@@ -376,7 +465,11 @@ public static class BundleCache
 
     private static string Dir => Path.Combine(AppPaths.CacheDir, "bundles");
 
-    public static async Task<string> GetAsync(BundleEntry bundle, IProgress<int>? progress, CancellationToken ct)
+    /// <summary>
+    /// The pack on disk: the earlier download when the server copy is unchanged (or the server can't
+    /// be reached), else a fresh download. <c>cached</c> tells which.
+    /// </summary>
+    public static async Task<(string file, bool cached)> GetAsync(BundleEntry bundle, IProgress<DownloadProgress>? progress, CancellationToken ct)
     {
         var uri = new Uri(bundle.Url!);
         string name = Path.GetFileName(Uri.UnescapeDataString(uri.AbsolutePath));
@@ -393,25 +486,40 @@ public static class BundleCache
 
         if (haveFile && (remote == null || SameVersion(cached!, remote)))
         {
-            progress?.Report(100);
-            return file; // unchanged on the server, or offline with a good local copy
+            return (file, true); // unchanged on the server, or offline with a good local copy
         }
 
-        await DownloadService.DownloadAsync(bundle.Url!, file,
-            new Progress<DownloadProgress>(p => { if (p.Percent is { } pct) progress?.Report(pct); }),
-            bundle.Sha256, ct).ConfigureAwait(false);
+        await DownloadService.DownloadAsync(bundle.Url!, file, progress, bundle.Sha256, ct).ConfigureAwait(false);
 
         var meta = remote ?? new Meta();
         meta.Url = bundle.Url;
         meta.Length = new FileInfo(file).Length;
         await File.WriteAllTextAsync(metaFile, JsonSerializer.Serialize(meta), ct).ConfigureAwait(false);
-        return file;
+        return (file, false);
     }
 
-    private static bool SameVersion(Meta a, Meta b)
-        => a.Length == b.Length
-           && (string.IsNullOrEmpty(b.ETag) || a.ETag == b.ETag)
-           && (string.IsNullOrEmpty(b.LastModified) || a.LastModified == b.LastModified);
+    /// <summary>
+    /// Is the server copy the one we have? A different size always means a new pack. Otherwise the
+    /// ETag decides (CDNs may add "W/" or vary it between edge servers, so a matching Last-Modified
+    /// also counts), then Last-Modified; with nothing to compare, the local copy is kept.
+    /// </summary>
+    private static bool SameVersion(Meta local, Meta server)
+    {
+        if (server.Length > 0 && local.Length != server.Length) return false;
+        string? le = NormEtag(local.ETag), se = NormEtag(server.ETag);
+        bool lastModSame = !string.IsNullOrEmpty(local.LastModified) && local.LastModified == server.LastModified;
+        if (le != null && se != null) return le == se || lastModSame;
+        if (!string.IsNullOrEmpty(local.LastModified) && !string.IsNullOrEmpty(server.LastModified)) return lastModSame;
+        return true;
+    }
+
+    private static string? NormEtag(string? etag)
+    {
+        if (string.IsNullOrWhiteSpace(etag)) return null;
+        string e = etag.Trim();
+        if (e.StartsWith("W/", StringComparison.OrdinalIgnoreCase)) e = e[2..];
+        return e.Trim('"');
+    }
 
     private static async Task<Meta?> HeadAsync(Uri uri, CancellationToken ct)
     {
@@ -425,7 +533,7 @@ public static class BundleCache
             {
                 Length = resp.Content.Headers.ContentLength ?? -1,
                 ETag = resp.Headers.ETag?.Tag,
-                LastModified = resp.Content.Headers.LastModified?.ToString("R")
+                LastModified = resp.Content.Headers.LastModified?.ToString("R", CultureInfo.InvariantCulture)
             };
         }
         catch

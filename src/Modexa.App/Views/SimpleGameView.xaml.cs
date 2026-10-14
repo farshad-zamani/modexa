@@ -36,6 +36,7 @@ public partial class SimpleGameView : UserControl, IInstallHost
         Loaded += OnLoaded;
         Unloaded += (_, _) => Loc.Instance.LanguageChanged -= RefreshFolderText;
         InstallPanel.Host = this;
+        InstallPanel.Changed += () => _ = RefreshStateAsync();
         RefreshFolderText();
     }
 
@@ -46,15 +47,9 @@ public partial class SimpleGameView : UserControl, IInstallHost
 
     public Task InstallFileAsync(string path) => InstallPanel.InstallAsync(path);
 
-    public void ShowBusy(string phaseKey, int? percent)
-    {
-        Overlay.Visibility = Visibility.Visible;
-        OverlayCancel.Visibility = Visibility.Collapsed;
-        OverlayPhase.Bind(TextBlock.TextProperty, phaseKey);
-        SetPercent(percent);
-    }
+    public void ShowBusy(InstallPhase phase) => Busy.Update(phase);
 
-    public void HideBusy() => ShowOverlay(false);
+    public void HideBusy() => Busy.Hide();
 
     private void OpenFolder_Click(object sender, RoutedEventArgs e) => ModInstallService.OpenFolder(_folder);
 
@@ -167,54 +162,41 @@ public partial class SimpleGameView : UserControl, IInstallHost
         if (_cts != null) return;
 
         _cts = new CancellationTokenSource();
-        ShowOverlay(true, "Dl_Downloading", cancellable: true);
-        var progress = new Progress<PrepareProgress>(p =>
-        {
-            OverlayPhase.Bind(TextBlock.TextProperty, p.Phase switch
-            {
-                PreparePhase.Downloading => "Dl_Downloading",
-                PreparePhase.Verifying => "Dl_Verifying",
-                PreparePhase.PreparingArchive => "Prep_CreatingModsRpf",
-                PreparePhase.Extracting => "Dl_Extracting",
-                PreparePhase.Installing => "Dl_Installing",
-                _ => "Common_Done"
-            });
-            SetPercent(p.Percent);
-        });
+        Busy.Show("Dl_Downloading", cancellable: true);
+        var progress = new Progress<PrepareProgress>(p => Busy.Update(PrepareBusy.Phase(p, copyStep: false)));
 
         try
         {
             var svc = new PrepareService(_manifest);
             var result = await svc.RunAsync(_game, PrepareStep.ModRunner, _folder, GameEdition.Unknown, 0,
                 _version, progress, _cts.Token);
-            ShowOverlay(false);
+            Busy.Hide();
 
             if (result.VersionWarning != null)
                 DialogWindow.Show(Loc.Instance.Format("Simple_VersionWarn", result.VersionWarning, _version ?? "?"), DialogKind.Warning);
             else
                 DialogWindow.Show(Loc.Instance["Simple_RunnerDone"], DialogKind.Success);
-            await RefreshStateAsync();
         }
-        catch (OperationCanceledException) { ShowOverlay(false); }
+        catch (OperationCanceledException) { Busy.Hide(); }
         catch (PrepareVersionException ex)
         {
-            ShowOverlay(false);
+            Busy.Hide();
             DialogWindow.Show(Loc.Instance.Format("Simple_VersionUnsupported", ex.Detected, string.Join("، ", ex.Available)), DialogKind.Warning);
         }
         catch (PrepareNotConfiguredException)
         {
-            ShowOverlay(false);
+            Busy.Hide();
             DialogWindow.Show(Loc.Instance["Prepare_NotConfigured"], DialogKind.Info);
         }
         catch (PrepareLayoutException ex)
         {
-            ShowOverlay(false);
+            Busy.Hide();
             Modexa.Core.Diagnostics.Log.Error("Prepare layout", ex);
             DialogWindow.Show(Loc.Instance["Prepare_LayoutChanged"], DialogKind.Error);
         }
         catch (Exception ex)
         {
-            ShowOverlay(false);
+            Busy.Hide();
             Modexa.Core.Diagnostics.Log.Error("Prepare", ex);
             DialogWindow.Show($"{Loc.Instance["Dl_Failed"]}\n\n{ex.Message}", DialogKind.Error);
         }
@@ -222,6 +204,9 @@ public partial class SimpleGameView : UserControl, IInstallHost
         {
             _cts?.Dispose();
             _cts = null;
+            // The Mod Runner is now in the installed list (with its own uninstall button).
+            await RefreshStateAsync();
+            InstallPanel.Refresh();
         }
     }
 
@@ -236,12 +221,13 @@ public partial class SimpleGameView : UserControl, IInstallHost
         }
         if (!DialogWindow.Confirm(Loc.Instance["GtaV_Revert_Confirm"], danger: true)) return;
 
-        ShowOverlay(true, "Dl_Restoring");
+        Busy.Show("Dl_Restoring");
         try
         {
-            var errors = await Task.Run(() => ModUninstaller.UninstallAll(folder));
+            var step = new Progress<string>(s => Busy.Update(new InstallPhase("Dl_Restoring", null, s.Replace('/', '\\'))));
+            var errors = await Task.Run(() => ModUninstaller.UninstallAll(folder, step));
             await Task.Run(() => PrepareService.Revert(folder));
-            ShowOverlay(false);
+            Busy.Hide();
             DialogWindow.Show(errors.Count == 0 ? Loc.Instance["Common_Done"]
                 : Loc.Instance.Format("Mods_UninstallIncomplete", string.Join("\n", errors.Take(6).Select(x => "• " + x))),
                 errors.Count == 0 ? DialogKind.Success : DialogKind.Warning);
@@ -249,7 +235,7 @@ public partial class SimpleGameView : UserControl, IInstallHost
         }
         catch (Exception ex)
         {
-            ShowOverlay(false);
+            Busy.Hide();
             DialogWindow.Show($"{Loc.Instance["Dl_Failed"]}\n\n{ex.Message}", DialogKind.Error);
         }
         await RefreshStateAsync();
@@ -259,25 +245,9 @@ public partial class SimpleGameView : UserControl, IInstallHost
     {
         if (_folder == null) { StepRunner.SetDone(false); return; }
         string folder = _folder;
-        var state = await Task.Run(() => PrepareState.Load(folder));
+        var state = await Task.Run(() => PrepareService.InstalledSteps(folder));
         StepRunner.SetDone(state.ContainsKey(PrepareStep.ModRunner));
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e) => _cts?.Cancel();
-
-    private void ShowOverlay(bool show, string phaseKey = "Dl_Downloading", bool cancellable = false)
-    {
-        Overlay.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        OverlayBar.IsIndeterminate = false;
-        if (!show) return;
-        OverlayPhase.Bind(TextBlock.TextProperty, phaseKey);
-        OverlayCancel.Visibility = cancellable ? Visibility.Visible : Visibility.Collapsed;
-        SetPercent(cancellable ? 0 : null);
-    }
-
-    private void SetPercent(int? pct)
-    {
-        if (pct is { } v) { OverlayBar.IsIndeterminate = false; OverlayBar.Value = v; OverlayPercent.Text = v + "%"; }
-        else { OverlayBar.IsIndeterminate = true; OverlayPercent.Text = ""; }
-    }
 }

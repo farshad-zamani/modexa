@@ -25,7 +25,6 @@ public static class Endpoints
     public static string EngineFor(LicenseTier tier) => tier == LicenseTier.Pro ? EnginePro : EnginePlus;
 
     /// <summary>License-gated per-product content key (POST) used to open a purchased .mxa.</summary>
-    // TODO(client): host the key endpoint on the WooCommerce site (PHP in secret/SERVER.md).
     public const string ContentKey = "https://rockstargame.ir/wp-json/modexa/key";
 
     /// <summary>Remote prepare-bundle manifest (GET, optional; a built-in default is used otherwise).</summary>
@@ -33,4 +32,8 @@ public static class Endpoints
 
     /// <summary>Where users buy licenses.</summary>
     public const string Shop = "https://rockstargame.ir/shop/";
+
+    /// <summary>Product pages promoted on the GTA V pages.</summary>
+    public const string BackupManagerPro = "https://rockstargame.ir/shop/games/virtual-products/applications/gta-v-backup-manager-pro/";
+    public const string MenyooFa = "https://rockstargame.ir/shop/games/virtual-products/applications/menyoofa-persian-menyoo-%d9%85%d9%86%db%8c%d9%88-%d9%81%d8%a7%d8%b1%d8%b3%db%8c/";
 }

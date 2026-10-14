@@ -42,6 +42,12 @@ public sealed class AppSettings
         else GameFolders[game.ToString()] = folder;
     }
 
+    /// <summary>
+    /// The look a licensed user picked ("Free", "Plus" or "Pro"). Null = match the license. Only the
+    /// look changes; what the app can do always follows the license.
+    /// </summary>
+    public string? Theme { get; set; }
+
     public double WindowWidth { get; set; } = 1180;
     public double WindowHeight { get; set; } = 760;
     public bool WindowMaximized { get; set; }

@@ -54,7 +54,8 @@ public sealed class Loc : INotifyPropertyChanged
     public string T(string key) => this[key];
 
     /// <summary>Localized format string: <c>Format("Key", arg0, ...)</c>.</summary>
-    public string Format(string key, params object?[] args) => string.Format(this[key], args);
+    /// <summary>A text with arguments, numbers formatted invariantly (the user's Windows may use fa-IR).</summary>
+    public string Format(string key, params object?[] args) => string.Format(System.Globalization.CultureInfo.InvariantCulture, this[key], args);
 
     /// <summary>Raised after the language changes (after bindings were notified).</summary>
     public event Action? LanguageChanged;

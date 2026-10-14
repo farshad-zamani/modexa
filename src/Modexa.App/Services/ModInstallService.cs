@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Windows;
 using Modexa.App.Views;
@@ -16,8 +17,12 @@ namespace Modexa.App.Services;
 
 public sealed record ModResult(bool Success, string Message, ModInstallRecord? Record = null, bool Cancelled = false);
 
-/// <summary>Progress of an install: a localized phase key and, when known, a percentage.</summary>
-public readonly record struct InstallPhase(string Key, int? Percent = null)
+/// <summary>
+/// Progress of an install for the page's busy card: a localized phase key, a percentage when known,
+/// a detail line (file / archive, sizes), the step ("Package 1 of 2"), and the mod's name and icon.
+/// </summary>
+public readonly record struct InstallPhase(string Key, int? Percent = null, string? Detail = null, string? Step = null,
+    string? Title = null, byte[]? Icon = null)
 {
     /// <summary>Phase key that tells the page to hide its busy overlay (a dialog is about to show).</summary>
     public const string Hide = "__hide";
@@ -50,7 +55,9 @@ public sealed record GameTarget(GameId Id, string Folder, string Title, GameEdit
 /// <summary>
 /// Every install and uninstall, driven from a game's page:
 ///
-///   .oiv / .oivs (all tiers)  -> public OIV installer, fully recorded for an exact uninstall.
+///   .oiv / .oivs (all tiers)  -> public OIV installer (read straight from the zip), fully recorded
+///                                for an exact uninstall; several files are installed in name order
+///                                (part 1, part 2, …) after one confirmation.
 ///   .mxa (licensed)           -> license for THIS product -> engine module -> content key -> engine installs.
 ///   .rpf / .zip / folder (Pro)-> Pro engine.
 ///   uninstall (all tiers)     -> <see cref="ModUninstaller"/> plays the install record back in reverse.
@@ -66,103 +73,140 @@ public static class ModInstallService
         => path.EndsWith(MxaFile.Extension, StringComparison.OrdinalIgnoreCase)
            || (gtaV && (OivExtensions.Concat(RawExtensions).Any(x => path.EndsWith(x, StringComparison.OrdinalIgnoreCase)) || Directory.Exists(path)));
 
+    /// <summary>
+    /// Installs several files in name order (so a split mod goes part 1, part 2, …). OpenIV packages
+    /// are confirmed together, once.
+    /// </summary>
+    public static async Task<List<ModResult>> InstallManyAsync(IReadOnlyList<string> paths, GameTarget target, Window owner,
+        IProgress<InstallPhase>? phase)
+    {
+        var ordered = paths.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(Path.GetFileName, NaturalComparer.Instance).ToList();
+        var oivs = target.IsGtaV ? ordered.Where(OivInstaller.IsPackageFile).ToList() : new List<string>();
+        var results = new List<ModResult>();
+        if (oivs.Count > 0) results.AddRange(await InstallOivAsync(oivs, target, phase));
+        foreach (var p in ordered.Except(oivs))
+            results.Add(await InstallAsync(p, target, owner, phase));
+        return results;
+    }
+
     /// <summary>Routes a file to the right installer for <paramref name="target"/>.</summary>
-    public static Task<ModResult> InstallAsync(string path, GameTarget target, Window owner, IProgress<InstallPhase>? phase)
+    public static async Task<ModResult> InstallAsync(string path, GameTarget target, Window owner, IProgress<InstallPhase>? phase)
     {
         if (path.EndsWith(MxaFile.Extension, StringComparison.OrdinalIgnoreCase))
-            return InstallPackageAsync(path, target, owner, phase);
+            return await InstallPackageAsync(path, target, owner, phase);
         if (!target.IsGtaV)
-            return Task.FromResult(Fail("Mods_UnsupportedHere"));
+            return Fail("Mods_UnsupportedHere");
         if (OivInstaller.IsPackageFile(path))
-            return InstallOivAsync(path, target, phase);
-        return InstallRawAsync(path, target, owner, phase);
+            return (await InstallOivAsync(new[] { path }, target, phase)).FirstOrDefault() ?? new ModResult(false, "", Cancelled: true);
+        return await InstallRawAsync(path, target, owner, phase);
     }
 
     // ---- OIV (Free) ------------------------------------------------------------------------------
 
-    public static async Task<ModResult> InstallOivAsync(string path, GameTarget target, IProgress<InstallPhase>? phase)
+    public static async Task<List<ModResult>> InstallOivAsync(IReadOnlyList<string> paths, GameTarget target, IProgress<InstallPhase>? phase)
     {
-        if (await Task.Run(() => GameProcess.IsRunning(target.Folder))) return Fail("Mods_GameRunning");
+        if (await Task.Run(() => GameProcess.IsRunning(target.Folder))) return new() { Fail("Mods_GameRunning") };
 
+        // 1) What each package says about itself (only assembly.xml is read: instant even for GBs).
         phase?.Report("Oiv_Reading");
-        string dir;
-        OivPackageInfo info;
-        try
+        var items = new List<(string Path, OivPackageInfo Info)>();
+        foreach (var path in paths)
         {
-            dir = await Task.Run(() => OivInstaller.ExtractToTemp(path));
-        }
-        catch (Exception ex) when (ex is ModInstallException or IOException or UnauthorizedAccessException)
-        {
-            return new ModResult(false, Loc.Instance.Format("Oiv_Invalid", ex.Message));
-        }
-
-        try
-        {
-            try { info = await Task.Run(() => OivInstaller.Inspect(dir)); }
-            catch (ModInstallException ex) { return new ModResult(false, Loc.Instance.Format("Oiv_Invalid", ex.Message)); }
-
-            string name = string.IsNullOrWhiteSpace(info.Name) ? Path.GetFileNameWithoutExtension(path) : info.Name;
-
-            // Confirm, showing what the package says about itself.
-            phase?.Report(new InstallPhase(InstallPhase.Hide)); // the confirmation dialog needs the page
-            var lines = new List<string> { Loc.Instance.Format("Oiv_Confirm", name, target.Title) };
-            if (!string.IsNullOrWhiteSpace(info.Version)) lines.Add(Loc.Instance.Format("Oiv_Version", info.Version));
-            if (!string.IsNullOrWhiteSpace(info.Author)) lines.Add(Loc.Instance.Format("Oiv_Author", info.Author));
-            if (!string.IsNullOrWhiteSpace(info.Description))
-                lines.Add("\n" + (info.Description!.Length > 400 ? info.Description[..400] + "…" : info.Description));
-            if (!DialogWindow.Prompt(string.Join("\n", lines), Loc.Instance["Common_Install"], Loc.Instance["Common_Cancel"], DialogKind.Question))
-                return new ModResult(false, "", Cancelled: true);
-
-            // Same package already installed here? Offer a clean reinstall.
-            var existing = InstalledModsStore.ForFolder(target.Folder)
-                .FirstOrDefault(r => r.ModType == MxaModType.Oiv && r.ProductId == null
-                                     && string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase));
-            if (existing != null)
+            try { items.Add((path, await Task.Run(() => OivInstaller.Inspect(path)))); }
+            catch (Exception ex) when (ex is ModInstallException or IOException or InvalidDataException or UnauthorizedAccessException)
             {
-                if (!DialogWindow.Confirm(Loc.Instance.Format("Oiv_Reinstall", name))) return new ModResult(false, "", Cancelled: true);
-                phase?.Report("Mods_Uninstalling");
-                var un = await Task.Run(() => ModUninstaller.Uninstall(existing));
-                if (!un.Success) return new ModResult(false, UninstallMessage(un));
+                return new() { new ModResult(false, Loc.Instance.Format("Oiv_Invalid", $"{Path.GetFileName(path)}: {ex.Message}")) };
             }
+        }
+        string NameOf((string Path, OivPackageInfo Info) i)
+            => string.IsNullOrWhiteSpace(i.Info.Name) ? Path.GetFileNameWithoutExtension(i.Path) : i.Info.Name;
 
-            // Game archives the package edits are copied to mods\ first — with visible progress.
-            foreach (var archive in info.Archives)
+        // 2) Disk space: copies of the game archives the packages edit + their content.
+        long needed = await Task.Run(() => items.Sum(i => OivInstaller.SpaceNeeded(i.Info, target.Folder)));
+        var (free, drive) = FreeSpace(target.Folder);
+
+        // 3) One confirmation, showing what the packages say about themselves.
+        phase?.Report(new InstallPhase(InstallPhase.Hide));
+        if (free >= 0 && needed > free)
+        {
+            DialogWindow.Show(Loc.Instance.Format("Oiv_NoSpace", Size(needed), drive, Size(free)), DialogKind.Warning);
+            return new() { new ModResult(false, "", Cancelled: true) };
+        }
+        var first = items[0];
+        var lines = new List<string>();
+        if (items.Count == 1)
+        {
+            lines.Add(Loc.Instance.Format("Oiv_Confirm", NameOf(first), target.Title));
+            if (!string.IsNullOrWhiteSpace(first.Info.Version)) lines.Add(Loc.Instance.Format("Oiv_Version", first.Info.Version));
+            if (!string.IsNullOrWhiteSpace(first.Info.Author)) lines.Add(Loc.Instance.Format("Oiv_Author", first.Info.Author));
+            if (!string.IsNullOrWhiteSpace(first.Info.Description))
+                lines.Add("\n" + (first.Info.Description!.Length > 400 ? first.Info.Description[..400] + "…" : first.Info.Description));
+        }
+        else
+        {
+            lines.Add(Loc.Instance.Format("Oiv_Confirm_Many", items.Count, target.Title));
+            foreach (var i in items)
+                lines.Add($"• {NameOf(i)}{(string.IsNullOrWhiteSpace(i.Info.Version) ? "" : "  " + i.Info.Version)}  —  {Path.GetFileName(i.Path)}");
+            if (items.Select(i => i.Info.Author).Distinct().Count() == 1 && !string.IsNullOrWhiteSpace(first.Info.Author))
+                lines.Add(Loc.Instance.Format("Oiv_Author", first.Info.Author));
+        }
+        if (needed > 0 && free >= 0) lines.Add("\n" + Loc.Instance.Format("Oiv_Space", Size(needed), drive, Size(free)));
+        if (!DialogWindow.Prompt(string.Join("\n", lines), Loc.Instance["Common_Install"], Loc.Instance["Common_Cancel"],
+                DialogKind.Question, image: first.Info.Icon))
+            return new() { new ModResult(false, "", Cancelled: true) };
+
+        // 4) The same mod file installed here before (same file name) is replaced. Differently named
+        //    files — e.g. the parts of a split mod — are always separate mods, never merged.
+        var plan = new List<((string Path, OivPackageInfo Info) Item, ModInstallRecord? Replace)>();
+        var installed = InstalledModsStore.ForFolder(target.Folder);
+        foreach (var i in items)
+        {
+            var existing = installed.FirstOrDefault(r => OivInstaller.IsSamePackage(r, i.Path));
+            if (existing != null && !DialogWindow.Confirm(Loc.Instance.Format("Oiv_Reinstall", NameOf(i)))) continue;
+            plan.Add((i, existing));
+        }
+
+        // 5) Install, one package after the other, with one progress for each.
+        var results = new List<ModResult>();
+        for (int n = 0; n < plan.Count; n++)
+        {
+            var ((path, info), replace) = plan[n];
+            string name = NameOf((path, info));
+            string? step = plan.Count > 1 ? Loc.Instance.Format("Busy_Package", n + 1, plan.Count) : null;
+            try
             {
-                bool inGame = await Task.Run(() => File.Exists(ModsArchives.GamePath(target.Folder, archive)));
-                if (!inGame) continue; // created by the package itself (createIfNotExist)
-                string? error = await EnsureModsArchiveAsync(target.Folder, archive, phase);
-                if (error != null) return new ModResult(false, error);
+                if (replace != null)
+                {
+                    phase?.Report(new InstallPhase("Mods_Uninstalling", null, replace.Source, step, name, info.Icon));
+                    var un = await Task.Run(() => ModUninstaller.Uninstall(replace));
+                    if (!un.Success) { results.Add(new ModResult(false, UninstallMessage(un))); continue; }
+                }
+
+                phase?.Report(new InstallPhase("Oiv_Phase_Install", 0, Path.GetFileName(path), step, name, info.Icon));
+                var record = NewRecord(target, path, name);
+                var progress = new Progress<OivProgress>(p => phase?.Report(new InstallPhase(
+                    p.Copying ? "Oiv_Phase_Copy" : "Oiv_Phase_Install", Percent(p.Done, p.Total),
+                    Detail(p.Current, p.Done, p.Total), step, name, info.Icon)));
+                await Task.Run(() =>
+                {
+                    OivInstaller.Apply(path, target.Folder, record, new OivApplyOptions { Progress = progress });
+                    InstalledModsStore.Add(record);
+                });
+                results.Add(Success(record));
             }
-
-            phase?.Report("Dl_Installing");
-            var record = NewRecord(target, path, name);
-            await Task.Run(() =>
+            catch (ModInstallException ex)
             {
-                OivInstaller.Apply(dir, target.Folder, record);
-                InstalledModsStore.Add(record);
-            });
-            return Success(record);
+                Log.Error("OIV install", ex);
+                results.Add(new ModResult(false, $"{name}: {InstallMessage(ex)}"));
+            }
+            catch (Exception ex)
+            {
+                Log.Error("OIV install", ex);
+                results.Add(new ModResult(false, $"{name}: {Loc.Instance["Dl_Failed"]}\n{ex.Message}"));
+            }
         }
-        catch (ModInstallException ex)
-        {
-            Log.Error("OIV install", ex);
-            return new ModResult(false, InstallMessage(ex));
-        }
-        catch (ModsArchiveException ex)
-        {
-            Log.Error("OIV install", ex);
-            return new ModResult(false, Loc.Instance.Format("Mods_NotPrepared", ModsArchiveMessages.For(ex)));
-        }
-        catch (Exception ex)
-        {
-            Log.Error("OIV install", ex);
-            return new ModResult(false, $"{Loc.Instance["Dl_Failed"]}\n{ex.Message}");
-        }
-        finally
-        {
-            string d = dir;
-            _ = Task.Run(() => OivInstaller.TryDeleteDir(d));
-        }
+        if (results.Count == 0) results.Add(new ModResult(false, "", Cancelled: true));
+        return results;
     }
 
     // ---- licensed .mxa ---------------------------------------------------------------------------
@@ -187,6 +231,7 @@ public static class ModInstallService
         var license = LicenseStore.ForProduct(info.ProductId);
         if (license == null)
         {
+            phase?.Report(new InstallPhase(InstallPhase.Hide));
             var dlg = new LicenseWindow(LicensePurpose.Product, prompt: info.Name, productId: info.ProductId) { Owner = owner };
             if (dlg.ShowDialog() != true)
                 return Fail("License_Required");
@@ -198,29 +243,37 @@ public static class ModInstallService
         try
         {
             // 2) The engine (Plus build is enough; a Pro user already has the superset).
-            phase?.Report("Engine_Downloading");
+            phase?.Report(new InstallPhase("Engine_Downloading", null, null, null, info.Name));
             string engineKey = LicenseStore.Best()?.Key ?? license.Key;
             var engine = await Task.Run(() => EngineModule.EnsureAsync(engineKey, LicenseTier.Plus));
 
             // 3) The product's content key — the server only issues it if the license covers the product.
-            phase?.Report("Dl_Verifying");
+            phase?.Report(new InstallPhase("Dl_Verifying", null, null, null, info.Name));
             byte[] contentKey = await Task.Run(() => EngineModule.GetContentKeyAsync(info.ProductId, license.Key));
 
-            // 4) Add-ons / OIVs edit mods\update\update.rpf: create it now, with visible progress.
-            if (target.IsGtaV && info.ModType is MxaModType.Addon or MxaModType.Oiv)
+            // 4) Add-ons edit mods\update\update.rpf: create it now, with visible progress.
+            bool needsRpf = target.IsGtaV && info.ModType == MxaModType.Addon;
+            int steps = needsRpf && !await Task.Run(() => ModsArchives.IsReady(target.Folder)) ? 3 : 2, at = 0;
+            string Step(int i) => Loc.Instance.Format("Busy_Step", i, steps);
+            if (steps == 3)
             {
-                string? error = await EnsureModsArchiveAsync(target.Folder, ModsArchives.UpdateRpf, phase);
+                string? error = await EnsureModsArchiveAsync(target.Folder, ModsArchives.UpdateRpf, phase, Step(++at), info.Name);
                 if (error != null) return new ModResult(false, error);
             }
 
             // 5) Decrypt + install inside the engine, on a worker thread.
-            phase?.Report("Dl_Installing");
+            int unpackStep = ++at, installStep = ++at;
+            var progress = new Progress<EngineProgress>(p => phase?.Report(new InstallPhase(
+                p.Stage == EngineStage.Unpacking ? "Mxa_Phase_Unpack" : "Oiv_Phase_Install",
+                Percent(p.Done, p.Total), Detail(p.Current, p.Done, p.Total),
+                Step(p.Stage == EngineStage.Unpacking ? unpackStep : installStep), info.Name)));
+            phase?.Report(new InstallPhase("Mxa_Phase_Unpack", 0, null, Step(unpackStep), info.Name));
             string work = NewWorkDir("unpack");
             try
             {
                 var record = await Task.Run(() =>
                 {
-                    var rec = engine.InstallPackage(mxaPath, contentKey, target.Folder, info.Game, work);
+                    var rec = engine.InstallPackage(mxaPath, contentKey, target.Folder, info.Game, work, progress);
                     Stamp(rec, target, mxaPath, info.Name);
                     rec.Author ??= string.IsNullOrWhiteSpace(info.Author) ? null : info.Author;
                     InstalledModsStore.Add(rec);
@@ -263,14 +316,15 @@ public static class ModInstallService
         if (await Task.Run(() => GameProcess.IsRunning(target.Folder))) return Fail("Mods_GameRunning");
         var pro = await GetProEngineAsync(owner, phase);
         if (pro == null) return Fail("Pro_Required");
+        string title = Path.GetFileName(path.TrimEnd('\\', '/'));
 
         if (Path.GetExtension(path).Equals(".rpf", StringComparison.OrdinalIgnoreCase))
         {
-            string? error = await EnsureModsArchiveAsync(target.Folder, ModsArchives.UpdateRpf, phase);
+            string? error = await EnsureModsArchiveAsync(target.Folder, ModsArchives.UpdateRpf, phase, null, title);
             if (error != null) return new ModResult(false, error);
         }
 
-        phase?.Report("Dl_Installing");
+        phase?.Report(new InstallPhase("Dl_Installing", null, null, null, title));
         string work = NewWorkDir("raw");
         try
         {
@@ -329,22 +383,76 @@ public static class ModInstallService
 
     // ---- uninstall (all tiers) -------------------------------------------------------------------
 
-    /// <summary>Removes a mod exactly as it was installed. Returns a message for the user.</summary>
-    public static async Task<ModResult> UninstallAsync(ModInstallRecord record)
+    /// <summary>
+    /// Removes mods exactly as they were installed (newest first, e.g. both parts of a split mod).
+    /// Returns a message for the user.
+    /// </summary>
+    public static async Task<ModResult> UninstallAsync(IReadOnlyList<ModInstallRecord> records, IProgress<InstallPhase>? phase = null)
     {
-        if (await Task.Run(() => GameProcess.IsRunning(record.GameFolder))) return Fail("Mods_GameRunning");
+        if (records.Count == 0) return new ModResult(false, "", Cancelled: true);
+        if (await Task.Run(() => GameProcess.IsRunning(records[0].GameFolder))) return Fail("Mods_GameRunning");
+        var errors = new List<string>();
+        long freed = 0;
         try
         {
-            var result = await Task.Run(() => ModUninstaller.Uninstall(record));
-            return result.Success
-                ? new ModResult(true, Loc.Instance.Format("Mods_Uninstalled", record.Name))
-                : new ModResult(false, UninstallMessage(result));
+            var ordered = records.OrderByDescending(r => r.InstalledUtc).ToList();
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                var r = ordered[i];
+                string title = DisplayName(r);
+                string? stepText = ordered.Count > 1 ? Loc.Instance.Format("Busy_Package", i + 1, ordered.Count) : null;
+                byte[]? icon = IconBytes(r);
+                phase?.Report(new InstallPhase("Mods_Uninstalling", null, r.Source, stepText, title, icon));
+                var step = new Progress<string>(s => phase?.Report(new InstallPhase("Mods_Uninstalling", null, s.Replace('/', '\\'), stepText, title, icon)));
+                var result = await Task.Run(() => ModUninstaller.Uninstall(r, step));
+                freed += result.FreedBytes;
+                errors.AddRange(result.Errors.Select(e => ordered.Count > 1 ? $"{title}: {e}" : e));
+            }
         }
         catch (Exception ex)
         {
             Log.Error("Uninstall", ex);
             return new ModResult(false, $"{Loc.Instance["Dl_Failed"]}\n{ex.Message}");
         }
+
+        if (errors.Count > 0)
+            return new ModResult(false, Loc.Instance.Format("Mods_UninstallIncomplete", string.Join("\n", errors.Take(6).Select(e => "• " + e))));
+        string done = records.Count == 1
+            ? Loc.Instance.Format("Mods_Uninstalled", DisplayName(records[0]))
+            : string.Join("\n", records.Select(r => Loc.Instance.Format("Mods_Uninstalled", $"{DisplayName(r)} ({r.Source})")));
+        if (freed > 64L * 1024 * 1024) done += "\n\n" + Loc.Instance.Format("Mods_Freed", Size(freed));
+        return new ModResult(true, done);
+    }
+
+    public static Task<ModResult> UninstallAsync(ModInstallRecord record) => UninstallAsync(new[] { record });
+
+    /// <summary>Installed records that are other parts of the same split mod (same name and author, same game).</summary>
+    public static List<ModInstallRecord> PartsOf(ModInstallRecord record)
+        => InstalledModsStore.ForFolder(record.GameFolder)
+            .Where(r => r.ModType == MxaModType.Oiv && record.ModType == MxaModType.Oiv && r.ProductId == null && r.Setup == null
+                        && string.Equals(r.Name, record.Name, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(r.Author ?? "", record.Author ?? "", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+    /// <summary>Deletes archive copies Modexa made that no installed mod uses any more.</summary>
+    public static async Task<ModResult> FreeUnusedAsync(string gameFolder, IReadOnlyList<UnusedArchive> unused, IProgress<InstallPhase>? phase)
+    {
+        if (await Task.Run(() => GameProcess.IsRunning(gameFolder))) return Fail("Mods_GameRunning");
+        var errors = new List<string>();
+        long freed = 0;
+        foreach (var u in unused)
+        {
+            phase?.Report(new InstallPhase("Mods_Uninstalling", null, u.Archive.Replace('/', '\\')));
+            try
+            {
+                await Task.Run(() => ModsArchives.Release(gameFolder, u.Archive));
+                freed += u.Bytes;
+            }
+            catch (Exception ex) { errors.Add($"{u.Archive}: {ex.Message}"); }
+        }
+        return errors.Count == 0
+            ? new ModResult(true, Loc.Instance.Format("Mods_Freed", Size(freed)))
+            : new ModResult(false, Loc.Instance.Format("Mods_UninstallIncomplete", string.Join("\n", errors.Take(6).Select(e => "• " + e))));
     }
 
     private static string UninstallMessage(UninstallResult result)
@@ -352,7 +460,52 @@ public static class ModInstallService
 
     // ---- helpers ---------------------------------------------------------------------------------
 
+    /// <summary>The name shown for a record (prepare steps in the current language).</summary>
+    public static string DisplayName(ModInstallRecord r) => r.Setup switch
+    {
+        Core.Prepare.PrepareStep.ModRunner when r.Game != "GtaV" => Loc.Instance["Simple_Step_Runner"],
+        Core.Prepare.PrepareStep.ModRunner => Loc.Instance["GtaV_Step_ModRunner"],
+        Core.Prepare.PrepareStep.GameConfig => Loc.Instance["GtaV_Step_GameConfig"],
+        Core.Prepare.PrepareStep.Menu => Loc.Instance["GtaV_Step_Menu"],
+        _ => string.IsNullOrWhiteSpace(r.Name) ? "(mod)" : r.Name
+    };
+
+    private static byte[]? IconBytes(ModInstallRecord r)
+    {
+        try { return r.IconFile != null && File.Exists(r.IconFile) ? File.ReadAllBytes(r.IconFile) : null; }
+        catch { return null; }
+    }
+
     private static ModResult Fail(string key) => new(false, Loc.Instance[key]);
+
+    private static int? Percent(long done, long total) => total > 0 ? (int)Math.Clamp(done * 100 / total, 0, 100) : null;
+
+    /// <summary>"x64\audio\sfx\RADIO_02_POP.rpf  ·  3.2 GB / 17.5 GB"</summary>
+    private static string? Detail(string? current, long done, long total)
+    {
+        string bytes = total > 0 ? $"{Size(done)} / {Size(total)}" : "";
+        string where = string.IsNullOrEmpty(current) ? "" : current.Replace('/', '\\');
+        return where.Length == 0 ? bytes : bytes.Length == 0 ? where : $"{where}  ·  {bytes}";
+    }
+
+    /// <summary>Human size, always with Latin digits ("3.2 GB").</summary>
+    public static string Size(long bytes) => bytes switch
+    {
+        >= 1L << 30 => (bytes / (double)(1L << 30)).ToString("0.0", CultureInfo.InvariantCulture) + " GB",
+        >= 1L << 20 => (bytes / (double)(1L << 20)).ToString("0", CultureInfo.InvariantCulture) + " MB",
+        >= 1L << 10 => (bytes / 1024.0).ToString("0", CultureInfo.InvariantCulture) + " KB",
+        _ => bytes.ToString(CultureInfo.InvariantCulture) + " B"
+    };
+
+    private static (long free, string drive) FreeSpace(string folder)
+    {
+        try
+        {
+            var d = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(folder))!);
+            return d.IsReady ? (d.AvailableFreeSpace, d.Name.TrimEnd('\\')) : (-1, d.Name);
+        }
+        catch { return (-1, ""); }
+    }
 
     private static ModInstallRecord NewRecord(GameTarget target, string source, string name) => new()
     {
@@ -387,14 +540,23 @@ public static class ModInstallService
     /// Creates mods\&lt;archive&gt; (copy of the game's, converted to OPEN) when it is missing.
     /// Returns a user-facing error, or null when the archive is ready.
     /// </summary>
-    private static async Task<string?> EnsureModsArchiveAsync(string gameFolder, string archive, IProgress<InstallPhase>? phase)
+    private static async Task<string?> EnsureModsArchiveAsync(string gameFolder, string archive, IProgress<InstallPhase>? phase,
+        string? step, string? title)
     {
         if (await Task.Run(() => ModsArchives.IsReady(gameFolder, archive))) return null;
-        phase?.Report(new InstallPhase("Prep_CreatingModsRpf", 0));
-        var copy = new Progress<int>(p => phase?.Report(new InstallPhase("Prep_CreatingModsRpf", p)));
+        long size = await Task.Run(() => ModsArchives.CopySize(gameFolder, archive));
+        string name = archive.Replace('/', '\\');
+        phase?.Report(new InstallPhase("Prep_CreatingModsRpf", 0, name, step, title));
+        long last = 0;
+        var copied = new Progress<long>(n =>
+        {
+            if (n - last < (16 << 20) && n < size) return;
+            last = n;
+            phase?.Report(new InstallPhase("Prep_CreatingModsRpf", Percent(n, size), Detail(name, n, size), step, title));
+        });
         try
         {
-            await Task.Run(() => ModsArchives.EnsureOpen(gameFolder, archive, copy));
+            await Task.Run(() => ModsArchives.EnsureOpen(gameFolder, archive, copied: copied));
             return null;
         }
         catch (ModsArchiveException ex)
@@ -429,6 +591,40 @@ public static class ModInstallService
         if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder)) return;
         try { Process.Start(new ProcessStartInfo { FileName = "explorer.exe", Arguments = $"\"{folder}\"", UseShellExecute = true }); }
         catch (Exception ex) { Log.Error("Open folder", ex); }
+    }
+}
+
+/// <summary>Orders "Package.2.oiv" before "Package.10.oiv" (numbers compared by value).</summary>
+public sealed class NaturalComparer : IComparer<string?>
+{
+    public static readonly NaturalComparer Instance = new();
+
+    public int Compare(string? a, string? b)
+    {
+        if (ReferenceEquals(a, b)) return 0;
+        if (a == null) return -1;
+        if (b == null) return 1;
+        int i = 0, j = 0;
+        while (i < a.Length && j < b.Length)
+        {
+            if (char.IsDigit(a[i]) && char.IsDigit(b[j]))
+            {
+                int si = i, sj = j;
+                while (i < a.Length && char.IsDigit(a[i])) i++;
+                while (j < b.Length && char.IsDigit(b[j])) j++;
+                string na = a[si..i].TrimStart('0'), nb = b[sj..j].TrimStart('0');
+                int c = na.Length != nb.Length ? na.Length.CompareTo(nb.Length) : string.CompareOrdinal(na, nb);
+                if (c != 0) return c;
+            }
+            else
+            {
+                int c = char.ToUpperInvariant(a[i]).CompareTo(char.ToUpperInvariant(b[j]));
+                if (c != 0) return c;
+                i++;
+                j++;
+            }
+        }
+        return (a.Length - i).CompareTo(b.Length - j);
     }
 }
 

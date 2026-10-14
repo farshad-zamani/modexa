@@ -3,8 +3,8 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:i18n="clr-namespace:Modexa.Core.I18n;assembly=Modexa.Core"
              AllowDrop="True" Drop="Root_Drop" DragOver="Root_DragOver" DragLeave="Root_DragLeave">
-    <!-- "Install mods" section of a game page: drop zone / file picker, then the mods installed
-         into this game folder with an uninstall button each. -->
+    <!-- "Install mods" section of a game page: drop zone / file picker, then everything installed
+         into this game folder (mods and prepare steps) with an uninstall button each. -->
     <StackPanel>
         <TextBlock Style="{StaticResource Display.H2}" Margin="0,32,0,0"
                    Text="{Binding [Mods_Section_Title], Source={x:Static i18n:Loc.Instance}}"/>
@@ -42,6 +42,27 @@
                 </Button>
             </Grid>
         </Grid>
+
+        <!-- Archive copies Modexa made that nothing uses any more (shown only when there are some). -->
+        <Border x:Name="UnusedCard" Style="{StaticResource Card}" Margin="0,16,0,0" Padding="20,16" Visibility="Collapsed"
+                BorderBrush="{DynamicResource Warning}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Icon}" FontSize="18" VerticalAlignment="Top" Margin="0,2,14,0"
+                           Foreground="{DynamicResource Warning}" Text="&#xE74D;"/>
+                <StackPanel Grid.Column="1" Margin="0,0,16,0">
+                    <TextBlock Style="{StaticResource Text.CardTitle}"
+                               Text="{Binding [Mods_Unused_Title], Source={x:Static i18n:Loc.Instance}}"/>
+                    <TextBlock x:Name="UnusedText" Style="{StaticResource Text.Desc}" Margin="0,4,0,0"/>
+                </StackPanel>
+                <Button x:Name="BtnFreeUnused" Grid.Column="2" Style="{StaticResource GhostButton}"
+                        VerticalAlignment="Center" Click="FreeUnused_Click"/>
+            </Grid>
+        </Border>
 
         <!-- Installed into this game -->
         <StackPanel Orientation="Horizontal" Margin="0,24,0,12">

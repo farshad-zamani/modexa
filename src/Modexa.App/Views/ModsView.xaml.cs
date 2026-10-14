@@ -2,6 +2,8 @@ using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using Modexa.App.Navigation;
 using Modexa.App.Services;
 using Modexa.Core.I18n;
@@ -11,9 +13,8 @@ using Modexa.Core.Licensing;
 namespace Modexa.App.Views;
 
 /// <summary>
-/// My Mods: everything installed on every game, grouped by game. Free and Plus see the list; Pro
-/// adds management here (uninstall, open the game folder). Installing — and uninstalling for every
-/// tier — happens on each game's own page.
+/// My Mods: everything installed on every game — mods and prepare steps — grouped by game, each
+/// with its uninstall button (every tier). Installing happens on each game's own page.
 /// </summary>
 public partial class ModsView : UserControl
 {
@@ -38,8 +39,6 @@ public partial class ModsView : UserControl
             Loc.Instance.LanguageChanged -= Refresh;
         };
     }
-
-    private static bool IsPro => ThemeService.CurrentTier == LicenseTier.Pro;
 
     private void OnTier(LicenseTier tier)
     {
@@ -68,10 +67,23 @@ public partial class ModsView : UserControl
         foreach (var g in mods.GroupBy(m => FolderKey(m.GameFolder), StringComparer.OrdinalIgnoreCase)
                               .OrderBy(g => Title(g.First())))
         {
-            var header = new Grid { Margin = new Thickness(0, 24, 0, 12) };
+            // Each game is a collapsible section: the header (arrow + title) opens and closes its list.
+            string key = g.Key;
+            bool open = !Collapsed.Contains(key);
+            var header = new Grid { Margin = new Thickness(0, 24, 0, 12), Background = Brushes.Transparent, Cursor = Cursors.Hand };
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var chevron = new TextBlock
+            {
+                Style = (Style)FindResource("Icon"), FontSize = 12, Text = "\uE70D",
+                VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0),
+                RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = new RotateTransform(open ? 0 : -90)
+            };
+            chevron.SetResourceReference(TextBlock.ForegroundProperty, "Text.Secondary");
+            header.Children.Add(chevron);
             var titles = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(titles, 1);
             var titleRow = new StackPanel { Orientation = Orientation.Horizontal };
             var title = new TextBlock { Text = Title(g.First()), Style = (Style)FindResource("Display.H2"), VerticalAlignment = VerticalAlignment.Center };
             title.SetResourceReference(TextBlock.FontFamilyProperty, "Font.En.Display");
@@ -93,22 +105,43 @@ public partial class ModsView : UserControl
             });
             header.Children.Add(titles);
 
-            var open = new Button { Style = (Style)FindResource("GhostButton.Small"), Tag = g.Key, VerticalAlignment = VerticalAlignment.Center };
+            var openBtn = new Button { Style = (Style)FindResource("GhostButton.Small"), Tag = g.Key, VerticalAlignment = VerticalAlignment.Center };
             var openContent = new StackPanel { Orientation = Orientation.Horizontal };
             openContent.Children.Add(new TextBlock { Style = (Style)FindResource("Icon"), FontSize = 14, Text = "" });
             var openText = new TextBlock { Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
             openText.Bind(TextBlock.TextProperty, "Common_OpenFolder");
             openContent.Children.Add(openText);
-            open.Content = openContent;
-            open.Click += (s, _) => ModInstallService.OpenFolder(((FrameworkElement)s).Tag as string);
-            Grid.SetColumn(open, 1);
-            header.Children.Add(open);
+            openBtn.Content = openContent;
+            openBtn.Click += (s, _) => ModInstallService.OpenFolder(((FrameworkElement)s).Tag as string);
+            Grid.SetColumn(openBtn, 2);
+            header.Children.Add(openBtn);
             Groups.Children.Add(header);
 
-            // Pro: manage right here. Free / Plus: view only (uninstall on the game's page).
+            var list = new StackPanel { Visibility = open ? Visibility.Visible : Visibility.Collapsed };
             foreach (var m in g.OrderByDescending(m => m.InstalledUtc))
-                Groups.Children.Add(ModRow.Build(this, m, onUninstall: IsPro ? Uninstall_Click : null));
+                list.Children.Add(ModRow.Build(this, m, onUninstall: Uninstall_Click));
+            Groups.Children.Add(list);
+
+            header.MouseLeftButtonUp += (_, e) =>
+            {
+                if (e.OriginalSource is DependencyObject d && FindParent<Button>(d) != null) return; // the Open folder button
+                bool nowOpen = list.Visibility != Visibility.Visible;
+                list.Visibility = nowOpen ? Visibility.Visible : Visibility.Collapsed;
+                if (nowOpen) Collapsed.Remove(key); else Collapsed.Add(key);
+                ((RotateTransform)chevron.RenderTransform).BeginAnimation(RotateTransform.AngleProperty,
+                    new System.Windows.Media.Animation.DoubleAnimation(nowOpen ? 0 : -90, TimeSpan.FromMilliseconds(160)));
+            };
         }
+    }
+
+    /// <summary>Game sections the user closed (kept while the app runs).</summary>
+    private static readonly HashSet<string> Collapsed = new(StringComparer.OrdinalIgnoreCase);
+
+    private static T? FindParent<T>(DependencyObject d) where T : DependencyObject
+    {
+        for (var cur = d; cur != null; cur = VisualTreeHelper.GetParent(cur))
+            if (cur is T hit) return hit;
+        return null;
     }
 
     private static string FolderKey(string folder)
@@ -124,23 +157,23 @@ public partial class ModsView : UserControl
     private async void Uninstall_Click(object sender, RoutedEventArgs e)
     {
         if (_busy || ((FrameworkElement)sender).Tag is not ModInstallRecord record) return;
-        if (!DialogWindow.Confirm(Loc.Instance.Format("Mods_Uninstall_Confirm", record.Name), danger: true)) return;
+        var records = await ModInstallPanel.ConfirmUninstallAsync(record);
+        if (records == null) return;
 
         _busy = true;
-        Overlay.Visibility = Visibility.Visible;
-        OverlayBar.IsIndeterminate = true;
+        Busy.Show("Mods_Uninstalling");
+        var phase = new Progress<InstallPhase>(p => { if (_busy) Busy.Update(p); });
         try
         {
-            var result = await ModInstallService.UninstallAsync(record);
-            Overlay.Visibility = Visibility.Collapsed;
-            OverlayBar.IsIndeterminate = false;
+            var result = await ModInstallService.UninstallAsync(records, phase);
+            _busy = false;
+            Busy.Hide();
             DialogWindow.Show(result.Message, result.Success ? DialogKind.Success : DialogKind.Warning);
         }
         finally
         {
             _busy = false;
-            Overlay.Visibility = Visibility.Collapsed;
-            OverlayBar.IsIndeterminate = false;
+            Busy.Hide();
             Refresh();
         }
     }

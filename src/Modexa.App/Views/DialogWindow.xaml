@@ -31,16 +31,32 @@
                 <TextBlock x:Name="IconGlyph" Style="{StaticResource Icon}" FontSize="18"
                            Foreground="{DynamicResource Accent}" Text="&#xE946;"/>
             </Border>
+            <!-- A package's own icon (OIV icon.png) replaces the glyph when there is one. -->
+            <Border x:Name="ImageFrame" Grid.RowSpan="2" Width="64" Height="64" CornerRadius="14"
+                    VerticalAlignment="Top" Background="{DynamicResource Bg.Inset}" Visibility="Collapsed">
+                <Border.Clip>
+                    <RectangleGeometry Rect="0,0,64,64" RadiusX="14" RadiusY="14"/>
+                </Border.Clip>
+                <Image x:Name="ImageBox" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
+            </Border>
 
             <TextBlock x:Name="TitleText" Grid.Column="1" Margin="16,2,0,0"
                        Style="{StaticResource Display.H2}" TextWrapping="Wrap"/>
             <StackPanel Grid.Row="1" Grid.Column="1" Margin="16,8,0,0">
                 <TextBlock x:Name="MessageText" Style="{StaticResource Text.Desc}" FontSize="14" LineHeight="22"/>
+                <!-- Optional "advanced" switch: the list is only open when it is on. -->
+                <StackPanel x:Name="AdvancedRow" Orientation="Horizontal" Margin="0,16,0,0" Visibility="Collapsed">
+                    <ToggleButton x:Name="AdvancedToggle" Style="{StaticResource SwitchToggle}" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="AdvancedText" Style="{StaticResource Text.Desc}" FontSize="13.5" Margin="12,0,0,0"
+                               VerticalAlignment="Center" TextWrapping="Wrap" Cursor="Hand"/>
+                </StackPanel>
                 <ComboBox x:Name="ChoiceBox" Margin="0,14,0,0" Visibility="Collapsed" MaxDropDownHeight="320"/>
             </StackPanel>
 
             <StackPanel Grid.Row="2" Grid.ColumnSpan="2" Orientation="Horizontal"
                         HorizontalAlignment="Right" Margin="0,26,0,0">
+                <Button x:Name="BtnTertiary" Style="{StaticResource GhostButton}" MinWidth="96" Margin="0,0,10,0"
+                        Visibility="Collapsed"/>
                 <Button x:Name="BtnSecondary" Style="{StaticResource GhostButton}" MinWidth="96"
                         IsCancel="True" Click="Secondary_Click" Visibility="Collapsed"/>
                 <Button x:Name="BtnPrimary" Style="{StaticResource PrimaryButton}" MinWidth="96"

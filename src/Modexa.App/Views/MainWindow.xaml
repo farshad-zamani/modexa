@@ -4,6 +4,7 @@
         xmlns:i18n="clr-namespace:Modexa.Core.I18n;assembly=Modexa.Core"
         xmlns:local="clr-namespace:Modexa.App.Views"
         Title="Modexa" Height="760" Width="1180" MinHeight="600" MinWidth="960"
+        Icon="pack://application:,,,/Modexa;component/assets/icon/modexa.ico"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource Bg.Base}"
         Foreground="{DynamicResource Text.Primary}"
@@ -38,9 +39,16 @@
 
                 <!-- Brand -->
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
-                    <Border Width="26" Height="26" CornerRadius="7" Background="{DynamicResource Accent.Gradient}">
+                    <!-- The Modexa logo: always the turquoise tile (same as the app icon), whatever the theme. -->
+                    <Border Width="26" Height="26" CornerRadius="7">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#FF48E0F0" Offset="0"/>
+                                <GradientStop Color="#FF1C8FA3" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
                         <TextBlock Text="M" FontFamily="{DynamicResource Font.En.Display}" FontWeight="Bold"
-                                   FontSize="15" Foreground="{DynamicResource Text.OnAccent}"
+                                   FontSize="15" Foreground="#FF04171B"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                     <TextBlock Text="MODEXA" FontFamily="{DynamicResource Font.En.Display}" FontWeight="Bold"
@@ -96,6 +104,27 @@
                                        Text="{Binding [Mods_Nav], Source={x:Static i18n:Loc.Instance}}"/>
                         </StackPanel>
                     </Button>
+                    <!-- Theme picker (licensed users): Free cyan / Plus gold / Pro black & gold. -->
+                    <Button x:Name="BtnTheme" Style="{StaticResource TitleButton}" Margin="4,0,0,0" Click="Theme_Click"
+                            Visibility="Collapsed"
+                            ToolTip="{Binding [Theme_Tip], Source={x:Static i18n:Loc.Instance}}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Icon}" FontSize="14" Text="&#xE790;"/>
+                            <TextBlock Margin="8,0,0,0" VerticalAlignment="Center"
+                                       Text="{Binding [Theme_Title], Source={x:Static i18n:Loc.Instance}}"/>
+                            <TextBlock Style="{StaticResource Icon}" FontSize="9" Margin="7,2,0,0" Text="&#xE70D;"/>
+                        </StackPanel>
+                    </Button>
+                    <Popup x:Name="ThemePopup" PlacementTarget="{Binding ElementName=BtnTheme}" Placement="Bottom"
+                           StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade" VerticalOffset="6">
+                        <Border Background="{DynamicResource Bg.Dialog}" BorderBrush="{DynamicResource Stroke.Strong}"
+                                BorderThickness="1" CornerRadius="12" Padding="6" Margin="0,0,14,14" MinWidth="260">
+                            <Border.Effect>
+                                <DropShadowEffect Color="Black" BlurRadius="18" ShadowDepth="0" Opacity="0.55"/>
+                            </Border.Effect>
+                            <StackPanel x:Name="ThemeOptions"/>
+                        </Border>
+                    </Popup>
                 </StackPanel>
 
                 <!-- Update + language -->
