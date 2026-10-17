@@ -29,7 +29,8 @@ public static class LicenseFormat
 
     private static readonly Regex CodePattern = new("^[A-Z0-9]{2,12}$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-    public static string Normalize(string? key) => (key ?? "").Trim().ToUpperInvariant();
+    /// <summary>Upper case, without any whitespace (keys are often pasted with spaces or line breaks).</summary>
+    public static string Normalize(string? key) => Regex.Replace(key ?? "", @"\s+", "").ToUpperInvariant();
 
     public static bool IsValid(string? key) => !string.IsNullOrWhiteSpace(key) && KeyPattern.IsMatch(Normalize(key));
 

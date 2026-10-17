@@ -5,6 +5,8 @@
              xmlns:i18n="clr-namespace:Modexa.Core.I18n;assembly=Modexa.Core">
 
     <Grid Background="Transparent">
+        <!-- The game's artwork, faint, behind the top of the page. -->
+        <local:GameBackdrop x:Name="Backdrop"/>
         <ScrollViewer Style="{StaticResource PageScroll}">
             <StackPanel Style="{StaticResource PageContent}">
 

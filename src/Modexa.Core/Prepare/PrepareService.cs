@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
@@ -63,6 +63,7 @@ public sealed record PrepareResult(
     string? ConfigFor,
     bool BuildMismatch,
     string? VersionWarning = null,
+    string? ConfigName = null,
     bool ModsRpfCreated = false,
     ModsArchiveException? ModsRpfError = null);
 
@@ -120,7 +121,7 @@ public sealed class PrepareService
             if (!files.Any(f => Matches(map, f)))
                 throw new PrepareLayoutException(map.From);
 
-        string? variant = null, configFolder = null, configFor = null;
+        string? variant = null, configFolder = null, configFor = null, configName = null;
         bool mismatch = false;
         var outcome = GameConfigOutcome.NotApplicable;
         if (bundle.GameConfig is { } gc)
@@ -130,6 +131,7 @@ public sealed class PrepareService
                        ?? throw new PrepareLayoutException(gc.VersionsRoot ?? gc.Folder);
             configFolder = pick.Folder;
             configFor = pick.ForBuild;
+            configName = pick.Folder.TrimEnd('/').Split('/')[^1]; // e.g. "Gta Config v34 for v 1.0.3407"
             mismatch = !pick.Matches;
             var variants = GameConfigVariants(files, configFolder)
                 .Where(v => !gc.Exclude.Any(x => v.Contains(x, StringComparison.OrdinalIgnoreCase)))
@@ -254,7 +256,7 @@ public sealed class PrepareService
         if (outcome != GameConfigOutcome.Skipped) outcome = installed.gcOutcome;
         progress?.Report(new PrepareProgress(PreparePhase.Done, 100));
 
-        return new PrepareResult(installed.count, outcome, variant, configFor, mismatch && build > 0, versionWarning, modsRpfCreated, modsRpfError);
+        return new PrepareResult(installed.count, outcome, variant, configFor, mismatch && build > 0, versionWarning, configName, modsRpfCreated, modsRpfError);
     }
 
     /// <summary>The prepare steps installed in a game folder (a GameConfig step counts once its gameconfig.xml is in place).</summary>

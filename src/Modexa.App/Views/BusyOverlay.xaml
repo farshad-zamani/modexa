@@ -19,7 +19,7 @@
                         <Border.Clip>
                             <RectangleGeometry Rect="0,0,48,48" RadiusX="11" RadiusY="11"/>
                         </Border.Clip>
-                        <Image x:Name="IconImage" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
+                        <Image x:Name="IconImage" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" FlowDirection="LeftToRight"/>
                     </Border>
                     <TextBlock x:Name="TitleText" Grid.Column="1" Style="{StaticResource Text.CardTitle}" FontSize="16"
                                VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="340"/>

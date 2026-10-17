@@ -16,10 +16,12 @@ namespace Modexa.App.Views;
 /// My Mods: everything installed on every game — mods and prepare steps — grouped by game, each
 /// with its uninstall button (every tier). Installing happens on each game's own page.
 /// </summary>
-public partial class ModsView : UserControl
+public partial class ModsView : UserControl, IInstallHost
 {
     private readonly INavigator _nav;
     private bool _busy;
+    /// <summary>Ticked rows, per game folder (each game section has its own selection bar).</summary>
+    private readonly Dictionary<string, ModSelection> _selections = new(StringComparer.OrdinalIgnoreCase);
 
     public ModsView(INavigator nav)
     {
@@ -59,8 +61,8 @@ public partial class ModsView : UserControl
     private void Refresh()
     {
         Groups.Children.Clear();
-        var mods = InstalledModsStore.All();
-        SummaryText.Text = Loc.Instance.Format("Mods_Summary", mods.Count,
+        var mods = ModItem.All();
+        SummaryText.Text = Loc.Instance.Format("Mods_Summary", mods.Count(m => m.Record != null),
             mods.Select(m => m.GameFolder).Distinct(StringComparer.OrdinalIgnoreCase).Count());
         EmptyNote.Visibility = mods.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
@@ -118,8 +120,8 @@ public partial class ModsView : UserControl
             Groups.Children.Add(header);
 
             var list = new StackPanel { Visibility = open ? Visibility.Visible : Visibility.Collapsed };
-            foreach (var m in g.OrderByDescending(m => m.InstalledUtc))
-                list.Children.Add(ModRow.Build(this, m, onUninstall: Uninstall_Click));
+            if (!_selections.TryGetValue(key, out var selection)) _selections[key] = selection = new ModSelection();
+            ModList.Fill(list, this, g.OrderByDescending(m => m.InstalledUtc).ToList(), selection, new GroupHost(this));
             Groups.Children.Add(list);
 
             header.MouseLeftButtonUp += (_, e) =>
@@ -150,25 +152,29 @@ public partial class ModsView : UserControl
         catch { return folder; }
     }
 
-    private static string Title(ModInstallRecord m)
-        => !string.IsNullOrWhiteSpace(m.GameTitle) ? m.GameTitle!
-            : m.Game switch { "GtaV" => "Grand Theft Auto V", "GtaSa" => "Grand Theft Auto San Andreas", _ => m.Game };
-
-    private async void Uninstall_Click(object sender, RoutedEventArgs e)
+    private static string Title(ModItem m)
     {
-        if (_busy || ((FrameworkElement)sender).Tag is not ModInstallRecord record) return;
-        var records = await ModInstallPanel.ConfirmUninstallAsync(record);
-        if (records == null) return;
+        string? title = m.Record?.GameTitle ?? m.Disabled?.GameTitle;
+        string game = m.Record?.Game ?? m.Disabled!.Game;
+        return !string.IsNullOrWhiteSpace(title) ? title!
+            : game switch { "GtaV" => "Grand Theft Auto V", "GtaSa" => "Grand Theft Auto San Andreas", _ => game };
+    }
 
+    // ---- IInstallHost: the page's busy overlay ----
+
+    public void ShowBusy(InstallPhase phase) => Busy.Update(phase);
+
+    public void HideBusy() => Busy.Hide();
+
+    /// <summary>Remove / disable / enable from a game section's list.</summary>
+    private async void Run(ModAction action, IReadOnlyList<ModItem> items, bool single)
+    {
+        if (_busy || ModActions.IsRunning) return;
         _busy = true;
-        Busy.Show("Mods_Uninstalling");
-        var phase = new Progress<InstallPhase>(p => { if (_busy) Busy.Update(p); });
         try
         {
-            var result = await ModInstallService.UninstallAsync(records, phase);
-            _busy = false;
-            Busy.Hide();
-            DialogWindow.Show(result.Message, result.Success ? DialogKind.Success : DialogKind.Warning);
+            if (await ModActions.RunAsync(action, items, single, this, Window.GetWindow(this)!))
+                foreach (var s in _selections.Values) s.SetAll(items.Select(i => i.Id), false);
         }
         finally
         {
@@ -176,5 +182,12 @@ public partial class ModsView : UserControl
             Busy.Hide();
             Refresh();
         }
+    }
+
+    private sealed class GroupHost : IModListHost
+    {
+        private readonly ModsView _view;
+        public GroupHost(ModsView view) => _view = view;
+        public void Run(ModAction action, IReadOnlyList<ModItem> items, bool single) => _view.Run(action, items, single);
     }
 }

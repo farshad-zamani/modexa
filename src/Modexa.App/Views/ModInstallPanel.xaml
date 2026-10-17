@@ -74,7 +74,7 @@
                            VerticalAlignment="Center" Text="0"/>
             </Border>
         </StackPanel>
-        <ItemsControl x:Name="InstalledList" Focusable="False"/>
+        <StackPanel x:Name="InstalledList"/>
         <Border x:Name="EmptyNote" Style="{StaticResource Card}" Padding="20,16">
             <TextBlock Style="{StaticResource Text.Desc}"
                        Text="{Binding [Mods_NoneHere], Source={x:Static i18n:Loc.Instance}}"/>

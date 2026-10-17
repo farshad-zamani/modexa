@@ -492,15 +492,18 @@ public sealed class RpfEditor : IDisposable
         uint len = (uint)data.Length;
         if (data.Length >= 16 && BitConverter.ToUInt32(data, 0) == Rsc7Magic)
         {
-            var stored = data;
-            if (len >= 0xFFFFFF)
-            {
-                if (!owned) stored = (byte[])data.Clone();
-                stored[7] = (byte)len; stored[14] = (byte)(len >> 8); stored[5] = (byte)(len >> 16); stored[2] = (byte)(len >> 24);
-            }
+            // The flags go into the TOC: read them before the size patch below overwrites header
+            // bytes (byte 14 is part of the graphics flags; wrong flags make the game hang loading).
             f.IsResource = true;
             f.SystemFlags = BitConverter.ToUInt32(data, 8);
             f.GraphicsFlags = BitConverter.ToUInt32(data, 12);
+            var stored = data;
+            if (len >= 0xFFFFFF)
+            {
+                // Too big for the TOC's 24-bit size: the game reads it from these header bytes.
+                if (!owned) stored = (byte[])data.Clone();
+                stored[7] = (byte)len; stored[14] = (byte)(len >> 8); stored[5] = (byte)(len >> 16); stored[2] = (byte)(len >> 24);
+            }
             f.FileSize = len;
             f.UncompressedSize = 0;
             f.Encrypted = false;

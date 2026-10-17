@@ -33,6 +33,7 @@ public partial class SimpleGameView : UserControl, IInstallHost
         _def = SimpleGames.Get(game);
         InitializeComponent();
         TitleText.Text = GameCatalog.Get(game).DisplayName;
+        Backdrop.SetGame(game);
         Loaded += OnLoaded;
         Unloaded += (_, _) => Loc.Instance.LanguageChanged -= RefreshFolderText;
         InstallPanel.Host = this;
@@ -150,7 +151,38 @@ public partial class SimpleGameView : UserControl, IInstallHost
         await RefreshStateAsync();
     }
 
-    private void Runner_Click(object sender, RoutedEventArgs e) => _ = RunAsync();
+    // Once installed, the step's button removes it.
+    private void Runner_Click(object sender, RoutedEventArgs e) => _ = StepRunner.IsDone ? RemoveAsync() : RunAsync();
+
+    private async Task RemoveAsync()
+    {
+        if (_folder == null || _cts != null) return;
+        string folder = _folder;
+        var steps = await Task.Run(() => PrepareService.InstalledSteps(folder));
+        if (!steps.TryGetValue(PrepareStep.ModRunner, out var record)) { await RefreshStateAsync(); return; }
+        var records = await ModInstallPanel.ConfirmUninstallAsync(record);
+        if (records == null) return;
+
+        _cts = new CancellationTokenSource();
+        bool busy = true;
+        Busy.Show("Mods_Uninstalling");
+        try
+        {
+            var result = await ModInstallService.UninstallAsync(records, new Progress<InstallPhase>(p => { if (busy) Busy.Update(p); }));
+            busy = false;
+            Busy.Hide();
+            DialogWindow.Show(result.Message, result.Success ? DialogKind.Success : DialogKind.Warning);
+        }
+        finally
+        {
+            busy = false;
+            Busy.Hide();
+            _cts?.Dispose();
+            _cts = null;
+            await RefreshStateAsync();
+            InstallPanel.Refresh();
+        }
+    }
 
     private async Task RunAsync()
     {

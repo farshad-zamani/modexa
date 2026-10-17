@@ -41,6 +41,8 @@ public sealed class ModInstallRecord
     public string? ProductId { get; set; }                 // FSLM product of a paid package (null otherwise)
     /// <summary>File name the mod was installed from (.oiv / .mxa / .rpf / .zip).</summary>
     public string? Source { get; set; }
+    /// <summary>Full path of the file / folder it was installed from (to keep it when the mod is disabled).</summary>
+    public string? SourcePath { get; set; }
     public string? Version { get; set; }
     public string? Author { get; set; }
     /// <summary>OIV: the package's own id (assembly.xml &lt;package id&gt;), when it has one.</summary>

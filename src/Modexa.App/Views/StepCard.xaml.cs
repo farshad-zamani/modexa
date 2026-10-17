@@ -23,12 +23,22 @@ public partial class StepCard : UserControl
 
     public StepCard() => InitializeComponent();
 
-    /// <summary>Shows the "Installed" chip (with an optional detail such as the gameconfig variant).</summary>
+    /// <summary>The step is installed: the action button removes it (see <see cref="SetDone"/>).</summary>
+    public bool IsDone { get; private set; }
+
+    /// <summary>
+    /// Shows the "Installed" chip (with an optional detail such as the gameconfig variant) and turns the
+    /// action into "Remove" while the step is installed.
+    /// </summary>
     public void SetDone(bool done, string? detail = null)
     {
+        IsDone = done;
         DoneChip.Visibility = done ? Visibility.Visible : Visibility.Collapsed;
         Services.Tr.Bind(DoneText, System.Windows.Controls.TextBlock.TextProperty, "Common_Installed");
         DoneChip.ToolTip = detail;
+        ActionButton.Style = (Style)FindResource(done ? "DangerButton" : "PrimaryButton");
+        if (done) Services.Tr.Bind(ActionButton, ContentProperty, "Mods_Uninstall");
+        else ActionButton.SetBinding(ContentProperty, new System.Windows.Data.Binding(nameof(ActionText)) { Source = this });
     }
 
     private void Action_Click(object sender, RoutedEventArgs e) => Click?.Invoke(this, e);

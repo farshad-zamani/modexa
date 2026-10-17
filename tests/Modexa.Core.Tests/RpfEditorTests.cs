@@ -85,6 +85,46 @@ public class RpfEditorTests
     }
 
     [Fact]
+    public void Large_resource_keeps_its_flags_and_stores_its_size_in_the_header()
+    {
+        string game = TempGame(out string rpf);
+        string src = Path.Combine(Path.GetTempPath(), "big_" + Guid.NewGuid().ToString("N") + ".ypt");
+        try
+        {
+            // > 16 MB: the TOC can't hold the size, so it goes into header bytes 2/5/7/14 — byte 14
+            // is inside the graphics flags, which must still reach the TOC unchanged.
+            var rsc = new byte[0x1000000 + 12345];
+            new Random(7).NextBytes(rsc);
+            BitConverter.GetBytes(0x37435352u).CopyTo(rsc, 0);
+            BitConverter.GetBytes(68u).CopyTo(rsc, 4);
+            BitConverter.GetBytes(0x44AE0005u).CopyTo(rsc, 8);
+            BitConverter.GetBytes(0x450E3207u).CopyTo(rsc, 12);
+            File.WriteAllBytes(src, rsc);
+
+            var ed = RpfEditor.Open(rpf);
+            ed.SetFileFrom("core.ypt", rsc.Length, () => File.OpenRead(src));
+            ed.Commit();
+
+            var entry = RpfArchive.Open(rpf).Entries.OfType<RpfResourceEntry>().Single(e => e.Name == "core.ypt");
+            Assert.Equal(0x44AE0005u, entry.SystemFlags);
+            Assert.Equal(0x450E3207u, entry.GraphicsFlags);
+            Assert.Equal(0xFFFFFFu, entry.FileSize);
+
+            var head = new byte[16];
+            using (var fs = File.OpenRead(rpf)) { fs.Position = entry.FileOffset * 512; fs.ReadExactly(head); }
+            uint stored = (uint)(head[7] | head[14] << 8 | head[5] << 16 | head[2] << 24);
+            Assert.Equal((uint)rsc.Length, stored);
+
+            Assert.Equal(rsc, RpfEditor.Open(rpf).ReadFile("core.ypt"));
+        }
+        finally
+        {
+            try { File.Delete(src); } catch { }
+            try { Directory.Delete(game, true); } catch { }
+        }
+    }
+
+    [Fact]
     public void Nested_archive_is_edited_through_the_chain()
     {
         string game = TempGame(out string rpf);

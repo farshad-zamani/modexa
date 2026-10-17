@@ -15,6 +15,9 @@ public class LicenseFormatTests
     [InlineData("MDXPLS-ABCDEF-GHJKLM-NPQRST-CAR206", false)]         // only 3 chunks
     [InlineData("RSGBMP-ABCDEF-GHJKLM-NPQRST-UVWXYZ-PRO", false)]     // Backup Manager key
     [InlineData("MDX-ABCDEF-GHJKLM-NPQRST-UVWXYZ-PRO", false)]        // old draft format
+    [InlineData("MDXPLS-ABCDEF-GHJKLM-NPQRST-UVWXYZ-ABCDEFGHJK12", true)]  // longest product code (12)
+    [InlineData(" MDXPLS-ABCDEF-GHJKLM-NPQRST-UVWXYZ-CAR206\r\n", true)]  // pasted with whitespace
+    [InlineData("MDXPLS-ABCDEF-GHJKLM-NPQRST-UVWXYZ-ABCDEFGHJK123", false)] // product code too long
     [InlineData("", false)]
     [InlineData(null, false)]
     public void IsValid_matches_expected(string? key, bool expected)

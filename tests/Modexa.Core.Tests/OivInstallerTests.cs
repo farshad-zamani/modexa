@@ -76,6 +76,26 @@ public class OivInstallerTests
     }
 
     [Fact]
+    public void Folder_delete_removes_the_folder_and_uninstall_puts_it_back()
+    {
+        using var s = new Sandbox();
+        // An older version's leftovers that a package deletes ("<delete>\nve-shaders\</delete>").
+        Directory.CreateDirectory(Path.Combine(s.Game, "old-shaders", "sub"));
+        File.WriteAllText(Path.Combine(s.Game, "old-shaders", "a.fx"), "a");
+        File.WriteAllText(Path.Combine(s.Game, "old-shaders", "sub", "b.fx"), "b");
+        string pkg = s.Package("<delete>\\old-shaders\\</delete><delete>\\mods\\</delete>", new());
+
+        var rec = s.Install(pkg);
+        Assert.False(Directory.Exists(Path.Combine(s.Game, "old-shaders")));
+        Assert.True(Directory.Exists(Path.Combine(s.Game, "mods"))); // never deleted as a whole
+        Assert.Contains(rec.Warnings, w => w.Contains("mods"));
+
+        Assert.True(ModUninstaller.Uninstall(rec).Success);
+        Assert.Equal("a", File.ReadAllText(Path.Combine(s.Game, "old-shaders", "a.fx")));
+        Assert.Equal("b", File.ReadAllText(Path.Combine(s.Game, "old-shaders", "sub", "b.fx")));
+    }
+
+    [Fact]
     public void Inspect_reads_metadata_and_touched_archives()
     {
         using var s = new Sandbox();

@@ -266,6 +266,61 @@
         </Style.Triggers>
     </Style>
 
+    <Style x:Key="DangerButton.Small" TargetType="Button" BasedOn="{StaticResource DangerButton}">
+        <Setter Property="Height" Value="34"/>
+        <Setter Property="FontSize" Value="14"/>
+        <Setter Property="Padding" Value="16,0"/>
+    </Style>
+
+    <!-- Selection box of the installed-mods lists (rounded square, accent fill + tick when checked). -->
+    <Style x:Key="SelectBox" TargetType="CheckBox">
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Foreground" Value="{DynamicResource Text.Secondary}"/>
+        <Setter Property="FontFamily" Value="{DynamicResource Font.Hud}"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="FontSize" Value="14"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="CheckBox">
+                    <StackPanel Orientation="Horizontal" Background="Transparent">
+                        <Border x:Name="box" Width="20" Height="20" CornerRadius="6" BorderThickness="1.5"
+                                Background="{DynamicResource Bg.Inset}" BorderBrush="{DynamicResource Stroke.Strong}"
+                                VerticalAlignment="Center">
+                            <TextBlock x:Name="tick" FontFamily="{DynamicResource Font.Icons}" FontSize="11" Text="&#xE73E;"
+                                       Foreground="{DynamicResource Text.OnAccent}" HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" Visibility="Collapsed"/>
+                        </Border>
+                        <ContentPresenter x:Name="cp" Margin="10,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True"/>
+                    </StackPanel>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="Content" Value="{x:Null}">
+                            <Setter TargetName="cp" Property="Margin" Value="0"/>
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="box" Property="BorderBrush" Value="{DynamicResource Stroke.Accent}"/>
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="box" Property="Background" Value="{DynamicResource Accent}"/>
+                            <Setter TargetName="box" Property="BorderBrush" Value="{DynamicResource Accent}"/>
+                            <Setter TargetName="tick" Property="Visibility" Value="Visible"/>
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="{x:Null}">
+                            <Setter TargetName="box" Property="BorderBrush" Value="{DynamicResource Accent}"/>
+                            <Setter TargetName="tick" Property="Text" Value="&#xE738;"/>
+                            <Setter TargetName="tick" Property="Foreground" Value="{DynamicResource Accent}"/>
+                            <Setter TargetName="tick" Property="Visibility" Value="Visible"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- Square icon button (Back, Close in dialogs). Content is usually a Path or icon glyph. -->
     <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource GhostButton}">
         <Setter Property="Width" Value="40"/>

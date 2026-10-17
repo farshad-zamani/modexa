@@ -77,13 +77,14 @@ public static class ModInstallService
     /// Installs several files in name order (so a split mod goes part 1, part 2, …). OpenIV packages
     /// are confirmed together, once.
     /// </summary>
+    /// <param name="confirm">False when the user already chose to install (e.g. enabling a disabled mod).</param>
     public static async Task<List<ModResult>> InstallManyAsync(IReadOnlyList<string> paths, GameTarget target, Window owner,
-        IProgress<InstallPhase>? phase)
+        IProgress<InstallPhase>? phase, bool confirm = true)
     {
         var ordered = paths.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(Path.GetFileName, NaturalComparer.Instance).ToList();
         var oivs = target.IsGtaV ? ordered.Where(OivInstaller.IsPackageFile).ToList() : new List<string>();
         var results = new List<ModResult>();
-        if (oivs.Count > 0) results.AddRange(await InstallOivAsync(oivs, target, phase));
+        if (oivs.Count > 0) results.AddRange(await InstallOivAsync(oivs, target, phase, confirm));
         foreach (var p in ordered.Except(oivs))
             results.Add(await InstallAsync(p, target, owner, phase));
         return results;
@@ -103,7 +104,8 @@ public static class ModInstallService
 
     // ---- OIV (Free) ------------------------------------------------------------------------------
 
-    public static async Task<List<ModResult>> InstallOivAsync(IReadOnlyList<string> paths, GameTarget target, IProgress<InstallPhase>? phase)
+    public static async Task<List<ModResult>> InstallOivAsync(IReadOnlyList<string> paths, GameTarget target, IProgress<InstallPhase>? phase,
+        bool confirm = true)
     {
         if (await Task.Run(() => GameProcess.IsRunning(target.Folder))) return new() { Fail("Mods_GameRunning") };
 
@@ -151,7 +153,7 @@ public static class ModInstallService
                 lines.Add(Loc.Instance.Format("Oiv_Author", first.Info.Author));
         }
         if (needed > 0 && free >= 0) lines.Add("\n" + Loc.Instance.Format("Oiv_Space", Size(needed), drive, Size(free)));
-        if (!DialogWindow.Prompt(string.Join("\n", lines), Loc.Instance["Common_Install"], Loc.Instance["Common_Cancel"],
+        if (confirm && !DialogWindow.Prompt(string.Join("\n", lines), Loc.Instance["Common_Install"], Loc.Instance["Common_Cancel"],
                 DialogKind.Question, image: first.Info.Icon))
             return new() { new ModResult(false, "", Cancelled: true) };
 
@@ -318,7 +320,41 @@ public static class ModInstallService
         if (pro == null) return Fail("Pro_Required");
         string title = Path.GetFileName(path.TrimEnd('\\', '/'));
 
-        if (Path.GetExtension(path).Equals(".rpf", StringComparison.OrdinalIgnoreCase))
+        // A .zip / folder that only holds mod packages (e.g. the parts of a split OIV): install the
+        // packages themselves, each as its own mod — never copy them into the game as files.
+        var (packages, hasAddon) = await Task.Run(() => LookInside(path));
+        if (packages.Count > 0)
+        {
+            string unpack = NewWorkDir("packages");
+            try
+            {
+                phase?.Report(new InstallPhase("Oiv_Reading", null, null, null, title));
+                var files = await Task.Run(() => ExtractPackages(path, packages, unpack));
+                var results = await InstallManyAsync(files, target, owner, phase);
+                var shown = results.Where(r => !r.Cancelled).ToList();
+                return shown.Count == 0 ? new ModResult(false, "", Cancelled: true)
+                    : new ModResult(shown.All(r => r.Success), string.Join("\n\n", shown.Select(r => r.Message)), shown.FirstOrDefault()?.Record);
+            }
+            finally { CleanupLater(unpack); }
+        }
+
+        // The same file installed here before: replace it (after asking), like an OIV reinstall.
+        string sourceName = Path.GetFileName(path.TrimEnd('\\', '/'));
+        var same = InstalledModsStore.ForFolder(target.Folder)
+            .FirstOrDefault(r => r.Setup == null && r.ProductId == null && r.ModType != MxaModType.Oiv
+                                 && string.Equals(r.Source, sourceName, StringComparison.OrdinalIgnoreCase));
+        if (same != null)
+        {
+            phase?.Report(new InstallPhase(InstallPhase.Hide));
+            if (!DialogWindow.Confirm(Loc.Instance.Format("Oiv_Reinstall", DisplayName(same))))
+                return new ModResult(false, "", Cancelled: true);
+            phase?.Report(new InstallPhase("Mods_Uninstalling", null, same.Source, null, title));
+            var un = await Task.Run(() => ModUninstaller.Uninstall(same));
+            if (!un.Success) return new ModResult(false, UninstallMessage(un));
+        }
+
+        // Add-ons go into mods\update\update.rpf's dlclist: make that copy first, with progress.
+        if (hasAddon || Path.GetExtension(path).Equals(".rpf", StringComparison.OrdinalIgnoreCase))
         {
             string? error = await EnsureModsArchiveAsync(target.Folder, ModsArchives.UpdateRpf, phase, null, title);
             if (error != null) return new ModResult(false, error);
@@ -351,6 +387,64 @@ public static class ModInstallService
         {
             CleanupLater(work);
         }
+    }
+
+    private static readonly string[] PackageExtensions = { ".oiv", ".oivs", ".mxa" };
+
+    /// <summary>Readmes, screenshots and links shipped with a mod (not part of what gets installed).</summary>
+    private static bool IsExtra(string name) => Path.GetExtension(name).ToLowerInvariant() is
+        ".txt" or ".md" or ".pdf" or ".url" or ".htm" or ".html" or ".rtf" or ".doc" or ".docx"
+        or ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" or ".bmp";
+
+    /// <summary>
+    /// What a .zip / folder holds: its mod packages when it holds nothing else (besides readmes and
+    /// pictures), and whether it carries an add-on dlc.rpf.
+    /// </summary>
+    private static (List<string> Packages, bool HasAddon) LookInside(string path)
+    {
+        try
+        {
+            List<string> names;
+            if (Directory.Exists(path))
+                names = Directory.GetFiles(path, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(path, f)).ToList();
+            else if (path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            {
+                using var zip = System.IO.Compression.ZipFile.OpenRead(path);
+                names = zip.Entries.Where(e => !string.IsNullOrEmpty(e.Name)).Select(e => e.FullName).ToList();
+            }
+            else return (new List<string>(), false);
+
+            var content = names.Where(n => !IsExtra(n)).ToList();
+            bool addon = content.Any(n => Path.GetFileName(n).Equals("dlc.rpf", StringComparison.OrdinalIgnoreCase));
+            // An extracted OIV (assembly.xml at the top) is one package as a whole: the engine applies it.
+            bool extractedOiv = content.Any(n => n.Equals("assembly.xml", StringComparison.OrdinalIgnoreCase) || n.Equals("super.xml", StringComparison.OrdinalIgnoreCase));
+            var packages = !extractedOiv && content.Count > 0 && content.All(n => PackageExtensions.Contains(Path.GetExtension(n).ToLowerInvariant()))
+                ? content : new List<string>();
+            return (packages, addon);
+        }
+        catch { return (new List<string>(), false); }
+    }
+
+    /// <summary>Copies the packages out of a .zip / folder (by file name — the name is the mod's identity).</summary>
+    private static List<string> ExtractPackages(string path, IReadOnlyList<string> packages, string dir)
+    {
+        var result = new List<string>();
+        if (Directory.Exists(path))
+        {
+            // Packages in a folder are installed from where they are.
+            result.AddRange(packages.Select(p => Path.Combine(path, p)));
+            return result;
+        }
+        using var zip = System.IO.Compression.ZipFile.OpenRead(path);
+        foreach (var name in packages)
+        {
+            var entry = zip.GetEntry(name) ?? zip.Entries.First(e => e.FullName.Equals(name, StringComparison.OrdinalIgnoreCase));
+            string dest = Path.Combine(dir, entry.Name);
+            if (File.Exists(dest)) dest = Path.Combine(dir, Guid.NewGuid().ToString("N")[..6] + "_" + entry.Name);
+            System.IO.Compression.ZipFileExtensions.ExtractToFile(entry, dest);
+            result.Add(dest);
+        }
+        return result;
     }
 
     /// <summary>The loaded Pro engine, downloading it for an existing PRO key or offering activation.</summary>
@@ -514,14 +608,22 @@ public static class ModInstallService
         GameTitle = target.Title,
         GameFolder = target.Folder,
         Source = Path.GetFileName(source.TrimEnd('\\', '/')),
+        SourcePath = FullPath(source),
         InstalledUtc = DateTime.UtcNow
     };
+
+    private static string? FullPath(string path)
+    {
+        try { return Path.GetFullPath(path.TrimEnd('\\', '/')); }
+        catch { return null; }
+    }
 
     private static void Stamp(ModInstallRecord rec, GameTarget target, string source, string? name)
     {
         rec.GameTitle = target.Title;
         rec.GameFolder = target.Folder;
         rec.Source = Path.GetFileName(source.TrimEnd('\\', '/'));
+        rec.SourcePath = FullPath(source);
         if (string.IsNullOrWhiteSpace(rec.Name) && !string.IsNullOrWhiteSpace(name)) rec.Name = name!;
         rec.InstalledUtc = DateTime.UtcNow;
     }
@@ -529,6 +631,8 @@ public static class ModInstallService
     /// <summary>"Done", plus anything the installer had to skip (unsupported package parts).</summary>
     private static ModResult Success(ModInstallRecord record)
     {
+        // Installed again from the same file: its "disabled" entry (if any) is no longer needed.
+        try { DisabledModsStore.RemoveSameSource(record.GameFolder, record.Source); } catch { }
         string done = Loc.Instance.Format("Mods_Installed_Ok", record.Name);
         if (record.Warnings.Count == 0) return new ModResult(true, done, record);
         var shown = record.Warnings.Take(8).Select(w => "• " + w).ToList();

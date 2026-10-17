@@ -1,6 +1,8 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Media;
+using System.Windows.Media.Effects;
 using Modexa.App.Navigation;
 using Modexa.App.Services;
 using Modexa.Core.Games;
@@ -72,14 +74,29 @@ public partial class HomeView : UserControl
 
     private static FrameworkElement BuildCardContent(GameInfo game, bool large)
     {
+        // Layers: the game's artwork filling the card -> a dark scrim (light at the top, deep where the
+        // name sits) so text stays readable on any picture -> icon, status chip and name.
+        var frame = new Grid();
+        if (GameArt.Artwork(game.Id, decodeWidth: large ? 760 : 520, gray: !game.Supported) is { } art)
+        {
+            frame.Children.Add(new Border
+            {
+                CornerRadius = new CornerRadius(13),
+                Background = new ImageBrush(art) { Stretch = Stretch.UniformToFill, AlignmentX = GameArt.ArtAlignment(game.Id), AlignmentY = AlignmentY.Center },
+                Opacity = game.Supported ? 1 : 0.55,
+                FlowDirection = FlowDirection.LeftToRight // pictures are never mirrored on a right-to-left page
+            });
+            frame.Children.Add(new Border { CornerRadius = new CornerRadius(13), Background = Scrim(game.Supported) });
+        }
+
         var root = new Grid { Margin = new Thickness(large ? 20 : 16) };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        frame.Children.Add(root);
 
-        // Monogram tile (placeholder art until logos arrive). Resource references keep it live
-        // across theme and language swaps.
+        // The game's icon (its monogram when the icon is missing).
         double tileSize = large ? 52 : 40;
         var tile = new Border
         {
@@ -88,22 +105,32 @@ public partial class HomeView : UserControl
             CornerRadius = new CornerRadius(large ? 12 : 10),
             BorderThickness = new Thickness(1),
             HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Top
-        };
-        tile.SetResourceReference(Border.BackgroundProperty, "Bg.Inset");
-        tile.SetResourceReference(Border.BorderBrushProperty, game.Supported ? "Stroke.Strong" : "Stroke.Subtle");
-        var mono = new TextBlock
-        {
-            Text = Monogram(game.Id),
-            FontWeight = FontWeights.Bold,
-            FontSize = large ? 19 : 15,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
+            Effect = new DropShadowEffect { BlurRadius = 12, ShadowDepth = 0, Opacity = 0.55, Color = Colors.Black },
             FlowDirection = FlowDirection.LeftToRight
         };
-        mono.SetResourceReference(TextBlock.FontFamilyProperty, "Font.En.Display");
-        mono.SetResourceReference(TextBlock.ForegroundProperty, game.Supported ? "Accent" : "Text.Muted");
-        tile.Child = mono;
+        tile.SetResourceReference(Border.BorderBrushProperty, game.Supported ? "Stroke.Strong" : "Stroke.Subtle");
+        if (GameArt.Icon(game.Id) is { } icon)
+        {
+            tile.Background = new ImageBrush(icon) { Stretch = Stretch.UniformToFill };
+            if (!game.Supported) tile.Opacity = 0.75;
+        }
+        else
+        {
+            tile.SetResourceReference(Border.BackgroundProperty, "Bg.Inset");
+            var mono = new TextBlock
+            {
+                Text = Monogram(game.Id),
+                FontWeight = FontWeights.Bold,
+                FontSize = large ? 19 : 15,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                FlowDirection = FlowDirection.LeftToRight
+            };
+            mono.SetResourceReference(TextBlock.FontFamilyProperty, "Font.En.Display");
+            mono.SetResourceReference(TextBlock.ForegroundProperty, game.Supported ? "Accent" : "Text.Muted");
+            tile.Child = mono;
+        }
         root.Children.Add(tile);
 
         // Status chip, top-trailing corner.
@@ -115,7 +142,7 @@ public partial class HomeView : UserControl
             VerticalAlignment = VerticalAlignment.Top,
             BorderThickness = new Thickness(1)
         };
-        chip.SetResourceReference(Border.BackgroundProperty, game.Supported ? "Accent.Soft" : "Bg.Inset");
+        chip.SetResourceReference(Border.BackgroundProperty, "Bg.Inset"); // solid: readable on any artwork
         chip.SetResourceReference(Border.BorderBrushProperty, game.Supported ? "Stroke.Accent" : "Stroke.Subtle");
         var chipText = new TextBlock { FontSize = 12, FontWeight = FontWeights.SemiBold };
         chipText.Bind(TextBlock.TextProperty, game.Supported ? "Home_Supported" : "Home_ComingSoon");
@@ -139,11 +166,23 @@ public partial class HomeView : UserControl
         };
         name.SetResourceReference(TextBlock.FontFamilyProperty, "Font.En.Display");
         name.SetResourceReference(TextBlock.ForegroundProperty, game.Supported ? "Text.Primary" : "Text.Secondary");
+        name.Effect = new DropShadowEffect { BlurRadius = 10, ShadowDepth = 0, Opacity = 0.9, Color = Colors.Black };
         Grid.SetRow(name, 1);
         Grid.SetColumnSpan(name, 2);
         root.Children.Add(name);
 
-        return root;
+        return frame;
+    }
+
+    /// <summary>Dark veil over the artwork: see-through at the top, nearly solid behind the name.</summary>
+    private static Brush Scrim(bool supported)
+    {
+        var b = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(0, 1) };
+        b.GradientStops.Add(new GradientStop(Color.FromArgb(supported ? (byte)0x40 : (byte)0x70, 6, 8, 11), 0));
+        b.GradientStops.Add(new GradientStop(Color.FromArgb(supported ? (byte)0x80 : (byte)0xA0, 6, 8, 11), 0.5));
+        b.GradientStops.Add(new GradientStop(Color.FromArgb(0xEC, 6, 8, 11), 1));
+        b.Freeze();
+        return b;
     }
 
     private void Card_Click(object sender, RoutedEventArgs e)

@@ -36,7 +36,8 @@
                            Text="{Binding Description, ElementName=Root}"/>
             </StackPanel>
 
-            <Button Grid.Column="2" Style="{StaticResource PrimaryButton}" MinWidth="128"
+            <!-- Install, or — once the step is installed — remove it. -->
+            <Button x:Name="ActionButton" Grid.Column="2" Style="{StaticResource PrimaryButton}" MinWidth="128"
                     VerticalAlignment="Center" Click="Action_Click"
                     Content="{Binding ActionText, ElementName=Root}"/>
         </Grid>

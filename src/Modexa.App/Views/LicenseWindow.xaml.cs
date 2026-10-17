@@ -74,7 +74,7 @@ public partial class LicenseWindow : Window
             return;
         }
 
-        string key = txtKey.Text.Trim();
+        string key = LicenseFormat.Normalize(txtKey.Text);
         if (!LicenseManager.IsFormatValid(key))
         {
             ShowMessage(Loc.Instance["License_InvalidFormat"], "Danger");

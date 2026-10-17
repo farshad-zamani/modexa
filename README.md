@@ -40,7 +40,7 @@ downloaded once and only again when it changes on the server:
 | GTA V Legacy / Enhanced | Mod Runner (ASI loader, ScriptHookV, ScriptHookVDotNet, Lua, OpenIV.asi / OpenRPF), GameConfig for add-on mods picked for your exact build (normal traffic by default, busier or quieter streets as an advanced option; + heap and packfile adjusters on Legacy), Menyoo trainer |
 | GTA San Andreas, GTA IV, Red Dead Redemption, Red Dead Redemption 2, Cyberpunk 2077 | The Mod Runner pack made for your game version |
 
-Each installed step appears in the game's **Installed** list (and in My Mods) with its own **Uninstall** button; the originals it replaced are restored exactly. **Revert** removes everything Modexa did in one go.
+Once a step is installed its button turns into **Remove mod**, and it also appears in the game's **Installed** list (and in My Mods); the originals it replaced are restored exactly. After installing the GameConfig, Modexa tells you which config of the pack was chosen for your build (e.g. *Gta Config v34 for v 1.0.3407*). **Revert** removes everything Modexa did in one go.
 
 ### Editable `update.rpf`, created automatically
 `gameconfig.xml`, add-on mods and most OIV packages need an editable copy of the game's
@@ -59,19 +59,18 @@ files), the time left and the file being worked on:
   start instantly;
 - a mod split into parts (`Package.1.oiv`, `Package.2.oiv`…) can be chosen or dropped together: the
   parts install in order and are listed separately; each part can be removed on its own, or all parts
-  at once. Parts are told apart by the package id, not by their (identical) name;
-
+  at once. Each file is its own mod, told apart by its file name;
 - files for `update\`, `x64\` or any `.rpf` always go to the `mods` folder (never into the original
   game files);
 - archive operations at any nesting depth: add / replace / delete files (binary, resource and nested
   `.rpf`), XML edits (add *First / Last / Before / After*, replace, remove) and text edits (add,
-  insert, replace, delete);
+  insert, replace, delete), and deleting files or whole folders on disk (put back on removal);
 - `.oivs` "super" packages install with their default selection;
 - if something fails part-way, everything already done is rolled back.
 
-### Uninstall any mod — free
+### Remove any mod — free
 Every install is recorded precisely: the original of each file it changed, a fingerprint of what it
-wrote, every individual XML/text edit, and the folders it created. **Uninstall** plays this back in
+wrote, every individual XML/text edit, and the folders it created. **Remove mod** plays this back in
 reverse:
 
 - a file nobody changed since is restored exactly (byte for byte);
@@ -84,13 +83,21 @@ reverse:
 - for copies made from the game, no backup copies are stored: the original files are read back from
   the game's own (encrypted) archives when needed;
 - folders the mod created are removed when empty; if the game is running (files locked), Modexa says
-  so, and pressing Uninstall again finishes the job.
+  so, and pressing Remove mod again finishes the job.
 
 The **Installed mods** list on each game page shows what is installed there — mods and prepare steps —
-each with its own Uninstall button. **My Mods** shows everything installed on every game in one place,
-with the same Uninstall buttons.
+each with its own **Remove mod** button. **My Mods** shows everything installed on every game in one place,
+with the same buttons. Tick several mods (or **Select all**) to disable, enable or remove them together.
+
+### Turn mods off and on — free
+**Disable** takes a mod out of the game without forgetting it: it is removed exactly like *Remove mod*
+(the game is truly back to how it was without it), and Modexa keeps a link to the mod file. **Enable**
+installs it again from that file. Nothing is hidden or renamed inside the game folder, so this is a
+safe way to find which mod causes a problem: turn mods off, test the game, turn them back on.
+If the mod file was moved or deleted in the meantime, Modexa asks for it.
 
 ### Also
+- Every game has its own look: its artwork on the home card and, faintly, behind its page.
 - **Open folder** next to every game path opens it in File Explorer.
 - Drag a mod file onto the window or double-click an `.mxa` in Explorer: Modexa opens the right
   game page and installs it there.
@@ -105,7 +112,8 @@ with the same Uninstall buttons.
 | Prepare every supported game for mods | ✅ | ✅ | ✅ |
 | Automatic editable `update.rpf` | ✅ | ✅ | ✅ |
 | Install OpenIV packages (`.oiv`, `.oivs`) | ✅ | ✅ | ✅ |
-| Uninstall mods (exact, any order) | ✅ | ✅ | ✅ |
+| Remove mods (exact, any order) | ✅ | ✅ | ✅ |
+| Disable / enable mods, bulk actions | ✅ | ✅ | ✅ |
 | Licensed Modexa mods (`.mxa`) from [WTMod.com](https://wtmod.com) | — | ✅ | ✅ |
 | Clean launch (safe for GTA Online) and one-click revert | — | ✅ | ✅ |
 | Install any other mod: add-on `.rpf`, `.zip`, folders | — | — | ✅ |

@@ -483,14 +483,39 @@ public static class OivInstaller
     {
         string target = op.InnerText.Trim();
         if (target.Length == 0) return;
-        string rel = ctx.DiskTarget(target);
+        string rel = ctx.DiskTarget(target).TrimEnd('\\', '/');
         string full = Path.Combine(ctx.GameFolder, rel);
+        if (Directory.Exists(full))
+        {
+            if (ProtectedFolders.Contains(rel, StringComparer.OrdinalIgnoreCase))
+            {
+                ctx.Result.Skipped.Add($"delete of the folder {rel} (not allowed)");
+                return;
+            }
+            // A folder (e.g. an older version's "\nve-shaders\"): each file is deleted with its
+            // original kept, so uninstall puts the folder back as it was.
+            foreach (var file in Directory.GetFiles(full, "*", SearchOption.AllDirectories))
+                DeleteTracked(ctx, Path.GetRelativePath(ctx.GameFolder, file));
+            foreach (var dir in Directory.GetDirectories(full, "*", SearchOption.AllDirectories).OrderByDescending(d => d.Length).Append(full))
+                try { if (!Directory.EnumerateFileSystemEntries(dir).Any()) Directory.Delete(dir); } catch { }
+            ctx.Result.Applied.Add($"delete {rel}\\");
+            return;
+        }
         if (!File.Exists(full)) return;
+        DeleteTracked(ctx, rel);
+        ctx.Result.Applied.Add($"delete {rel}");
+    }
+
+    /// <summary>Folders a package may never delete as a whole.</summary>
+    private static readonly string[] ProtectedFolders =
+        { "mods", @"mods\update", @"mods\x64", @"mods\update\x64", @"mods\update\x64\dlcpacks", "scripts", "plugins" };
+
+    private static void DeleteTracked(Ctx ctx, string rel)
+    {
         var rec = LooseFileInstaller.Track(ctx.Record, rel); // keeps the original so uninstall puts it back
-        File.Delete(full);
+        File.Delete(Path.Combine(ctx.GameFolder, rel));
         if (!rec.WasCreated) rec.WasDeleted = true;
         rec.WrittenStamp = null;
-        ctx.Result.Applied.Add($"delete {rel}");
     }
 
     private static void DiskEdit(Ctx ctx, XmlElement op)

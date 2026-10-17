@@ -37,7 +37,7 @@
                 <Border.Clip>
                     <RectangleGeometry Rect="0,0,64,64" RadiusX="14" RadiusY="14"/>
                 </Border.Clip>
-                <Image x:Name="ImageBox" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
+                <Image x:Name="ImageBox" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" FlowDirection="LeftToRight"/>
             </Border>
 
             <TextBlock x:Name="TitleText" Grid.Column="1" Margin="16,2,0,0"

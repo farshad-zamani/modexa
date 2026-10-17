@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -25,11 +25,12 @@ public interface IInstallHost
 /// every tier, licensed .mxa packages, and for Pro also add-on .rpf / .zip), then everything
 /// installed into this game folder — mods and prepare steps alike — each removable with one click.
 /// </summary>
-public partial class ModInstallPanel : UserControl
+public partial class ModInstallPanel : UserControl, IModListHost
 {
     private GameTarget? _target;
     private bool _busy;
     private List<UnusedArchive> _unused = new();
+    private readonly ModSelection _selection = new();
 
     public IInstallHost? Host { get; set; }
 
@@ -79,16 +80,14 @@ public partial class ModInstallPanel : UserControl
     {
         var target = _target;
         var (mods, unused) = target == null
-            ? (new List<ModInstallRecord>(), new List<UnusedArchive>())
-            : await Task.Run(() => (InstalledModsStore.ForFolder(target.Folder), SafeUnused(target.Folder)));
+            ? (new List<ModItem>(), new List<UnusedArchive>())
+            : await Task.Run(() => (ModItem.ForFolder(target.Folder), SafeUnused(target.Folder)));
         if (!ReferenceEquals(target, _target)) return; // the folder changed meanwhile
 
-        InstalledList.Items.Clear();
-        mods.Reverse(); // newest first
+        // Newest first; disabled mods stay listed (with Enable) so they are easy to turn back on.
         CountText.Text = mods.Count.ToString(CultureInfo.InvariantCulture);
         EmptyNote.Visibility = mods.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        foreach (var m in mods)
-            InstalledList.Items.Add(ModRow.Build(this, m, onUninstall: Uninstall_Click));
+        ModList.Fill(InstalledList, this, mods, _selection, this);
 
         _unused = unused;
         long bytes = unused.Sum(u => u.Bytes);
@@ -103,25 +102,24 @@ public partial class ModInstallPanel : UserControl
         catch { return new List<UnusedArchive>(); }
     }
 
-    private async void Uninstall_Click(object sender, RoutedEventArgs e)
+    /// <summary>Remove / disable / enable from the list (one row, or the ticked rows).</summary>
+    public async void Run(ModAction action, IReadOnlyList<ModItem> items, bool single)
     {
-        if (_busy || ((FrameworkElement)sender).Tag is not ModInstallRecord record) return;
-        var records = await ConfirmUninstallAsync(record);
-        if (records == null) return;
-
+        if (_busy || ModActions.IsRunning) return;
         _busy = true;
+        UnusedCard.Visibility = Visibility.Collapsed;
+        bool changed = false;
         try
         {
-            var result = await ModInstallService.UninstallAsync(records, BusyProgress());
-            Host?.HideBusy();
-            DialogWindow.Show(result.Message, result.Success ? DialogKind.Success : DialogKind.Warning);
+            changed = await ModActions.RunAsync(action, items, single, Host, Window.GetWindow(this)!);
+            if (changed) _selection.SetAll(items.Select(i => i.Id), false);
         }
         finally
         {
             _busy = false;
             Host?.HideBusy();
             Refresh();
-            Changed?.Invoke();
+            if (changed) Changed?.Invoke();
         }
     }
 
@@ -204,7 +202,7 @@ public partial class ModInstallPanel : UserControl
 
     public async Task InstallAsync(IReadOnlyList<string> paths)
     {
-        if (_busy || paths.Count == 0) return;
+        if (_busy || ModActions.IsRunning || paths.Count == 0) return;
         if (_target == null)
         {
             DialogWindow.Show(Loc.Instance["Dl_NoGameFolder"], DialogKind.Warning);
@@ -279,111 +277,5 @@ public partial class ModInstallPanel : UserControl
     {
         DropOutline.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty, on ? "Stroke.Accent" : "Stroke.Strong");
         DropBg.SetResourceReference(Border.BackgroundProperty, on ? "Bg.Elevated" : "Bg.Panel");
-    }
-}
-
-/// <summary>One installed-mod row (shared by the game pages and My Mods).</summary>
-public static class ModRow
-{
-    public static FrameworkElement Build(FrameworkElement owner, ModInstallRecord record,
-        RoutedEventHandler? onUninstall, RoutedEventHandler? onOpenFolder = null)
-    {
-        var card = new Border
-        {
-            Style = (Style)owner.FindResource("Card"),
-            Padding = new Thickness(18, 14, 18, 14),
-            Margin = new Thickness(0, 0, 0, 10)
-        };
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        // The package's own icon when it has one, else a glyph for the kind.
-        var tile = new Border { Style = (Style)owner.FindResource("IconTile"), Width = 40, Height = 40, CornerRadius = new CornerRadius(10) };
-        if (BusyOverlay.LoadImage(record.IconFile, 80) is { } icon)
-        {
-            tile.Child = new Image { Source = icon, Stretch = Stretch.UniformToFill };
-            tile.Clip = new RectangleGeometry(new Rect(0, 0, 40, 40), 10, 10);
-        }
-        else
-        {
-            var glyph = new TextBlock
-            {
-                Style = (Style)owner.FindResource("Icon"),
-                Text = record.KindLabel switch { "OIV" => "\uE7B8", "Modexa" => "\uE8D7", "Add-on" => "\uE710", "Setup" => "\uE90F", _ => "\uE8B7" }
-            };
-            glyph.SetResourceReference(TextBlock.ForegroundProperty, "Accent");
-            tile.Child = glyph;
-        }
-        grid.Children.Add(tile);
-
-        var info = new StackPanel { Margin = new Thickness(14, 0, 16, 0), VerticalAlignment = VerticalAlignment.Center };
-        var title = new StackPanel { Orientation = Orientation.Horizontal };
-        title.Children.Add(new TextBlock
-        {
-            Text = ModInstallService.DisplayName(record),
-            Style = (Style)owner.FindResource("Text.CardTitle"),
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            TextWrapping = TextWrapping.NoWrap,
-            VerticalAlignment = VerticalAlignment.Center
-        });
-        var kind = new Border { Style = (Style)owner.FindResource("TierChip"), Margin = new Thickness(10, 0, 0, 0), MinHeight = 20, Padding = new Thickness(7, 0, 7, 0), VerticalAlignment = VerticalAlignment.Center };
-        var kindText = new TextBlock { FontSize = 11, FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center };
-        if (record.Setup != null) kindText.Bind(TextBlock.TextProperty, "Mods_Kind_Setup");
-        else kindText.Text = record.KindLabel;
-        kindText.SetResourceReference(TextBlock.FontFamilyProperty, record.Setup != null ? "Font.Hud" : "Font.En.Hud");
-        kindText.SetResourceReference(TextBlock.ForegroundProperty, "Accent");
-        kind.Child = kindText;
-        title.Children.Add(kind);
-        info.Children.Add(title);
-
-        var parts = new List<string>();
-        if (!string.IsNullOrWhiteSpace(record.Version)) parts.Add(record.Setup == null ? "v" + record.Version : record.Version!);
-        if (!string.IsNullOrWhiteSpace(record.Author)) parts.Add(record.Author!);
-        parts.Add(record.InstalledUtc.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
-        int changes = record.Files.Count + record.ArchiveEdits.Count;
-        parts.Add(Loc.Instance.Format("Mods_Changes", changes));
-        if (!string.IsNullOrWhiteSpace(record.Source)) parts.Add(record.Source!);
-        var meta = new TextBlock
-        {
-            // Each part ends with a left-to-right mark, so a Persian part ("2 تغییر") never pulls the
-            // numbers of the next one ("206.oiv") into right-to-left order.
-            Text = string.Join("\u200E  ·  ", parts) + "\u200E",
-            Style = (Style)owner.FindResource("Text.Desc"),
-            Margin = new Thickness(0, 3, 0, 0),
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            TextWrapping = TextWrapping.NoWrap,
-            // File names, versions and dates are Latin: lay the line out LTR (aligned to the page side)
-            // so a Persian page doesn't scramble "206.oiv" into "oiv.206".
-            FlowDirection = FlowDirection.LeftToRight,
-            TextAlignment = Loc.Instance.IsRtl ? TextAlignment.Right : TextAlignment.Left
-        };
-        NumberSubstitution.SetSubstitution(meta, NumberSubstitutionMethod.European);
-        info.Children.Add(meta);
-        Grid.SetColumn(info, 1);
-        grid.Children.Add(info);
-
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        if (onOpenFolder != null)
-        {
-            var open = new Button { Style = (Style)owner.FindResource("IconButton"), Tag = record, Margin = new Thickness(0, 0, 8, 0) };
-            open.Content = new TextBlock { Style = (Style)owner.FindResource("Icon"), FontSize = 15, Text = "\uE838" };
-            open.SetBinding(FrameworkElement.ToolTipProperty, Tr.B("Common_OpenFolder"));
-            open.Click += onOpenFolder;
-            actions.Children.Add(open);
-        }
-        if (onUninstall != null)
-        {
-            var uninstall = new Button { Style = (Style)owner.FindResource("DangerButton"), Tag = record };
-            uninstall.Bind(ContentControl.ContentProperty, "Mods_Uninstall");
-            uninstall.Click += onUninstall;
-            actions.Children.Add(uninstall);
-        }
-        Grid.SetColumn(actions, 2);
-        grid.Children.Add(actions);
-
-        card.Child = grid;
-        return card;
     }
 }

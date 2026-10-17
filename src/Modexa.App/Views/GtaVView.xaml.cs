@@ -36,6 +36,7 @@ public partial class GtaVView : UserControl, IInstallHost
         _edition = edition == GameEdition.Enhanced ? GameEdition.Enhanced : GameEdition.Legacy;
         InitializeComponent();
         TitleText.Text = "Grand Theft Auto V";
+        Backdrop.SetGame(GameCatalog.ForEdition(_edition));
         EditionBadgeText.Text = _edition == GameEdition.Enhanced ? "ENHANCED" : "LEGACY";
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
@@ -215,9 +216,44 @@ public partial class GtaVView : UserControl, IInstallHost
 
     // ---- Prepare steps -------------------------------------------------------------------------
 
-    private void ModRunner_Click(object sender, RoutedEventArgs e) => _ = RunStepAsync(PrepareStep.ModRunner);
-    private void GameConfig_Click(object sender, RoutedEventArgs e) => _ = RunStepAsync(PrepareStep.GameConfig);
-    private void Menu_Click(object sender, RoutedEventArgs e) => _ = RunStepAsync(PrepareStep.Menu);
+    // An installed step's button removes it; otherwise it installs.
+    private void ModRunner_Click(object sender, RoutedEventArgs e) => _ = StepClickAsync(StepModRunner, PrepareStep.ModRunner);
+    private void GameConfig_Click(object sender, RoutedEventArgs e) => _ = StepClickAsync(StepGameConfig, PrepareStep.GameConfig);
+    private void Menu_Click(object sender, RoutedEventArgs e) => _ = StepClickAsync(StepMenu, PrepareStep.Menu);
+
+    private Task StepClickAsync(StepCard card, PrepareStep step) => card.IsDone ? RemoveStepAsync(step) : RunStepAsync(step);
+
+    /// <summary>Removes an installed prepare step exactly like any installed mod.</summary>
+    private async Task RemoveStepAsync(PrepareStep step)
+    {
+        if (_install == null || _cts != null) return;
+        string folder = _install.Folder;
+        var steps = await Task.Run(() => PrepareService.InstalledSteps(folder));
+        if (!steps.TryGetValue(step, out var record)) { await RefreshPrepareStateAsync(); return; }
+        var records = await ModInstallPanel.ConfirmUninstallAsync(record);
+        if (records == null) return;
+
+        _cts = new CancellationTokenSource(); // also keeps other steps from starting meanwhile
+        bool busy = true;
+        Busy.Show("Mods_Uninstalling");
+        try
+        {
+            var result = await ModInstallService.UninstallAsync(records, new Progress<InstallPhase>(p => { if (busy) Busy.Update(p); }));
+            busy = false;
+            Busy.Hide();
+            DialogWindow.Show(result.Message, result.Success ? DialogKind.Success : DialogKind.Warning);
+        }
+        finally
+        {
+            busy = false;
+            Busy.Hide();
+            _cts?.Dispose();
+            _cts = null;
+            await RefreshPrepareStateAsync();
+            InstallPanel.Refresh();
+            await UpdateCleanLaunchStateAsync();
+        }
+    }
 
     private async Task RunStepAsync(PrepareStep step)
     {
@@ -297,6 +333,10 @@ public partial class GtaVView : UserControl, IInstallHost
         {
             case GameConfigOutcome.Applied:
                 lines.Add(Loc.Instance.Format("Prep_GameConfigApplied", GameConfigLabels.Label(r.GameConfigVariant ?? "")));
+                // Which config of the pack was chosen for this build (e.g. "Gta Config v34 for v 1.0.3407").
+                if (!string.IsNullOrWhiteSpace(r.ConfigName))
+                    lines.Add(Loc.Instance.Format("Prep_ConfigPicked", "‎" + r.ConfigName + "‎",
+                        build > 0 ? build.ToString(System.Globalization.CultureInfo.InvariantCulture) : "?"));
                 if (_edition == GameEdition.Legacy) lines.Add(Loc.Instance["Prep_AdjustersInstalled"]);
                 if (r.ModsRpfCreated) lines.Add(Loc.Instance["Prep_ModsRpfCreated"]);
                 break;

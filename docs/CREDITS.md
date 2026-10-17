@@ -24,6 +24,9 @@ Formal license texts: [THIRD-PARTY-NOTICES.txt](../THIRD-PARTY-NOTICES.txt).
 - Fonts under the SIL OFL 1.1: **Vazirmatn** (Saber Rastikerdar), **Chakra Petch** (Cadson Demak),
   **Rajdhani** (Indian Type Foundry).
 - Official builds: **OpenIV.asi** and its ASI loader (OpenIV team).
+- Game icons and artwork on the home cards and game pages come from each game's Steam store assets
+  and belong to their publishers (Rockstar Games, CD PROJEKT RED, Kunos Simulazioni, SCS Software,
+  Playground Games / Xbox Game Studios, BeamNG). They are used only to show which game is which.
 
 ## Downloaded at runtime (not bundled)
 
@@ -33,6 +36,6 @@ The free prerequisite packs are hosted by **[WTMod.com](https://wtmod.com)** and
 **CLEO**, **Lenny's Mod Loader** and **Mod Loader** (thelink2012).
 
 All game trademarks belong to their respective owners. Modexa is a third-party tool and is not
-affiliated with or endorsed by Rockstar Games, Take-Two Interactive or CD PROJEKT.
+affiliated with or endorsed by Rockstar Games, Take-Two Interactive, CD PROJEKT or the other publishers named above.
 
 Developed by [cloudtart.com](https://cloudtart.com) · Made for [wtmod.com](https://wtmod.com)
