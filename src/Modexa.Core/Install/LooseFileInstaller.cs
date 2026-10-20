@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text;
 using Modexa.Core.Format;
 
@@ -139,7 +139,9 @@ public static class LooseFileInstaller
         InstallDirs.PruneCreated(record);
     }
 
-    internal static void RevertFiles(ModInstallRecord record, IReadOnlyList<ModInstallRecord> later, List<string> errors)
+    /// <param name="kept">Files left in place because something else changed them after the mod wrote them.</param>
+    internal static void RevertFiles(ModInstallRecord record, IReadOnlyList<ModInstallRecord> later, List<string> errors,
+        List<string>? kept = null)
     {
         for (int i = record.Files.Count - 1; i >= 0; i--)
         {
@@ -148,7 +150,7 @@ public static class LooseFileInstaller
             string full = Path.Combine(record.GameFolder, f.Dest);
             try
             {
-                RevertFile(record, f, full, later);
+                RevertFile(record, f, full, later, kept);
                 f.Reverted = true;
             }
             catch (Exception ex)
@@ -158,15 +160,15 @@ public static class LooseFileInstaller
         }
     }
 
-    private static void RevertFile(ModInstallRecord record, InstalledFile f, string full, IReadOnlyList<ModInstallRecord> later)
+    private static void RevertFile(ModInstallRecord record, InstalledFile f, string full, IReadOnlyList<ModInstallRecord> later,
+        List<string>? kept)
     {
         // "Clean launch" parks loader DLLs under another name: put the file back first.
         string parked = full + Prepare.CleanLaunchService.DisabledSuffix;
         if (!File.Exists(full) && File.Exists(parked)) File.Move(parked, full);
 
-        string? current = FileStamp.Of(full);
         // Unchanged since the mod wrote (or deleted) it? (No stamp = a created archive the mod owns.)
-        bool untouched = f.WasDeleted ? current == null : f.WrittenStamp == null || current == f.WrittenStamp;
+        bool untouched = f.WasDeleted ? !File.Exists(full) : f.WrittenStamp == null || FileStamp.Matches(f.WrittenStamp, full);
 
         if (!untouched)
         {
@@ -191,7 +193,8 @@ public static class LooseFileInstaller
                 f.OriginalBackup = null;
                 return;
             }
-            // Changed by something else (the user, a game update): don't destroy that change.
+            // Changed by something else (the user, a game update): don't destroy that change — but say so.
+            if (File.Exists(full)) kept?.Add(f.Dest);
             return;
         }
 

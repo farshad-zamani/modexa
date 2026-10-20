@@ -33,6 +33,9 @@ public static class Endpoints
     /// <summary>Where users buy licenses.</summary>
     public const string Shop = "https://rockstargame.ir/shop/";
 
+    /// <summary>Where players get game updates (suggested when a game is too old for the GameConfig pack).</summary>
+    public const string GameUpdates = "https://gameever.ir/";
+
     /// <summary>Product pages promoted on the GTA V pages.</summary>
     public const string BackupManagerPro = "https://rockstargame.ir/shop/games/virtual-products/applications/gta-v-backup-manager-pro/";
     public const string MenyooFa = "https://rockstargame.ir/shop/games/virtual-products/applications/menyoofa-persian-menyoo-%d9%85%d9%86%db%8c%d9%88-%d9%81%d8%a7%d8%b1%d8%b3%db%8c/";

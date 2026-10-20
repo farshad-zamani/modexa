@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Input;
 using Modexa.App.Services;
 using Modexa.Core.I18n;
@@ -190,6 +190,161 @@ public partial class DialogWindow : Window
         else dlg.WindowStartupLocation = WindowStartupLocation.CenterScreen;
         dlg.ShowDialog();
         return dlg._choice;
+    }
+
+    /// <summary>
+    /// One line of <see cref="ChooseMany"/>: a label, a detail line, where it sits (a short folder path),
+    /// and whether it can be ticked. <paramref name="Checked"/> null = the list decides (ticked only when
+    /// it is the only choice).
+    /// </summary>
+    public sealed record CheckItem(string Label, string? Detail = null, bool Enabled = true, bool? Checked = null, string? Badge = null,
+        string? Location = null);
+
+    /// <summary>
+    /// A list of tick boxes (e.g. the mods found in a file): returns the indexes the user ticked, or
+    /// null when cancelled. With several choices nothing is ticked at first, and "Select all" ticks or
+    /// clears them all. Items that can't be ticked are shown with their reason only.
+    /// </summary>
+    public static List<int>? ChooseMany(string title, string message, IReadOnlyList<CheckItem> items, string primaryText, byte[]? image = null)
+    {
+        var dlg = new DialogWindow(message, DialogKind.Question, title, confirm: true, danger: false) { Width = 640 };
+        dlg.BtnPrimary.Content = primaryText;
+        dlg.BtnSecondary.Content = Loc.Instance["Common_Cancel"];
+        dlg.ShowImage(image);
+        int selectable = items.Count(i => i.Enabled);
+        var boxes = new List<System.Windows.Controls.CheckBox?>();
+
+        System.Windows.Controls.CheckBox? all = null;
+        if (selectable > 1)
+        {
+            all = new System.Windows.Controls.CheckBox
+            {
+                Style = (Style)dlg.FindResource("SelectBox"), IsChecked = false, Margin = new Thickness(0, 0, 0, 12),
+                Content = Loc.Instance["Mods_SelectAll"]
+            };
+            dlg.ChecksHeader.Child = all;
+            dlg.ChecksHeader.Visibility = Visibility.Visible;
+        }
+
+        foreach (var item in items)
+        {
+            var row = new System.Windows.Controls.StackPanel { Margin = new Thickness(0, 0, 0, 12) };
+            var head = new System.Windows.Controls.StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+            System.Windows.Controls.CheckBox? box = null;
+            var label = new System.Windows.Controls.TextBlock
+            {
+                Text = item.Label, FontSize = 14, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center, MaxWidth = 440
+            };
+            label.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, item.Enabled ? "Text.Primary" : "Text.Muted");
+            if (item.Enabled)
+            {
+                box = new System.Windows.Controls.CheckBox
+                {
+                    Style = (Style)dlg.FindResource("SelectBox"), IsChecked = item.Checked ?? selectable == 1, Content = label,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                head.Children.Add(box);
+            }
+            else
+            {
+                var no = new System.Windows.Controls.TextBlock { Style = (Style)dlg.FindResource("Icon"), FontSize = 14, Text = "\uE711", Margin = new Thickness(3, 0, 13, 0) };
+                no.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "Warning");
+                head.Children.Add(no);
+                head.Children.Add(label);
+            }
+            if (item.Badge != null)
+            {
+                var chip = new System.Windows.Controls.Border { Style = (Style)dlg.FindResource("TierChip"), Margin = new Thickness(10, 0, 0, 0), MinHeight = 20, Padding = new Thickness(7, 0, 7, 0), VerticalAlignment = VerticalAlignment.Center };
+                var t = new System.Windows.Controls.TextBlock { Text = item.Badge, FontSize = 11, FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center };
+                t.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "Accent");
+                chip.Child = t;
+                head.Children.Add(chip);
+            }
+            row.Children.Add(head);
+            // Where it sits (a few last folders): tells same-named files in different folders apart.
+            if (!string.IsNullOrWhiteSpace(item.Location))
+            {
+                var where = new System.Windows.Controls.StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, Margin = new Thickness(30, 4, 0, 0) };
+                var icon = new System.Windows.Controls.TextBlock { Style = (Style)dlg.FindResource("Icon"), FontSize = 11, Text = "\uE8B7", Margin = new Thickness(0, 0, 6, 0) };
+                icon.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "Text.Muted");
+                var path = new System.Windows.Controls.TextBlock
+                {
+                    Text = item.Location, FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 470,
+                    FlowDirection = FlowDirection.LeftToRight, VerticalAlignment = VerticalAlignment.Center
+                };
+                path.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "Text.Muted");
+                where.Children.Add(icon);
+                where.Children.Add(path);
+                row.Children.Add(where);
+            }
+            if (!string.IsNullOrWhiteSpace(item.Detail))
+            {
+                var detail = new System.Windows.Controls.TextBlock
+                {
+                    Text = item.Detail, Style = (Style)dlg.FindResource("Text.Desc"), TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(30, 3, 0, 0)
+                };
+                if (item.Enabled)
+                {
+                    // File names and paths: laid out left-to-right (aligned to the page side) so a Persian
+                    // page doesn't scramble them.
+                    detail.FlowDirection = FlowDirection.LeftToRight;
+                    detail.TextAlignment = Loc.Instance.IsRtl ? TextAlignment.Right : TextAlignment.Left;
+                }
+                row.Children.Add(detail);
+            }
+            dlg.ChecksPanel.Children.Add(row);
+            boxes.Add(box);
+        }
+        dlg.ChecksScroll.Visibility = Visibility.Visible;
+
+        bool syncing = false;
+        void Sync()
+        {
+            var live = boxes.Where(b => b != null).ToList();
+            int on = live.Count(b => b!.IsChecked == true);
+            dlg.BtnPrimary.IsEnabled = on > 0;
+            if (all == null) return;
+            syncing = true;
+            all.IsChecked = on == 0 ? false : on == live.Count ? true : null;
+            syncing = false;
+        }
+        foreach (var b in boxes.Where(b => b != null)) { b!.Checked += (_, _) => Sync(); b.Unchecked += (_, _) => Sync(); }
+        if (all != null)
+            all.Click += (_, _) =>
+            {
+                if (syncing) return;
+                // A click on a partly ticked box ticks everything; on a full one it clears everything.
+                bool tick = boxes.Any(b => b != null && b.IsChecked != true);
+                foreach (var b in boxes.Where(b => b != null)) b!.IsChecked = tick;
+                Sync();
+            };
+        Sync();
+        var owner = ActiveOwner();
+        if (owner != null && owner.IsLoaded) dlg.Owner = owner;
+        else dlg.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        if (dlg.ShowDialog() != true) return null;
+        return boxes.Select((b, i) => (b, i)).Where(x => x.b?.IsChecked == true).Select(x => x.i).ToList();
+    }
+
+    /// <summary>Asks for a line of text (e.g. the place a mod's author gives). Returns null when cancelled.</summary>
+    public static string? AskText(string title, string message, string? example = null, string? initial = null)
+    {
+        var dlg = new DialogWindow(message, DialogKind.Question, title, confirm: true, danger: false) { Width = 600 };
+        dlg.BtnPrimary.Content = Loc.Instance["Common_Install"];
+        dlg.BtnSecondary.Content = Loc.Instance["Common_Cancel"];
+        dlg.InputRow.Visibility = Visibility.Visible;
+        dlg.InputText.Text = initial ?? "";
+        if (example != null) dlg.InputHint.Text = example;
+        void Sync() => dlg.BtnPrimary.IsEnabled = !string.IsNullOrWhiteSpace(dlg.InputText.Text);
+        dlg.InputText.TextChanged += (_, _) => Sync();
+        Sync();
+        dlg.Loaded += (_, _) => { dlg.InputText.Focus(); dlg.InputText.SelectAll(); };
+        var owner = ActiveOwner();
+        if (owner != null && owner.IsLoaded) dlg.Owner = owner;
+        else dlg.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        return dlg.ShowDialog() == true ? dlg.InputText.Text.Trim() : null;
     }
 
     private void ShowImage(byte[]? image)

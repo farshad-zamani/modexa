@@ -7,6 +7,7 @@
 ;    * The app keeps NO data next to the exe: settings, licenses, engine and backups live in
 ;      %LocalAppData%\Modexa, so updates simply replace Modexa.exe.
 ;    * .mxa files open in Modexa (double-click a purchased mod to install it).
+;    * optionally .oiv / .oivs too (double-click an OpenIV package to install it with Modexa).
 ; ============================================================================================
 
 #define AppName      "Modexa"
@@ -63,12 +64,17 @@ en.AssocMxa=Open Modexa packages (.mxa) with Modexa
 fa.AssocMxa=باز کردن بسته‌های مادکسا (.mxa) با مادکسا
 en.MxaType=Modexa mod package
 fa.MxaType=بسته‌ی ماد مادکسا
+en.AssocOiv=Open OpenIV packages (.oiv, .oivs) with Modexa
+fa.AssocOiv=باز کردن پکیج‌های OpenIV (.oiv و .oivs) با مادکسا
+en.OivType=OpenIV mod package
+fa.OivType=پکیج ماد OpenIV
 en.RemoveData=Also delete your Modexa data (settings, licenses, downloaded engine and backups of original game files)?%n%nChoose No to keep it for a later reinstall.
 fa.RemoveData=داده‌های مادکسا (تنظیمات، لایسنس‌ها، موتور دانلودشده و نسخه‌ی پشتیبان فایل‌های اصلی بازی) هم حذف شود؟%n%nبرای نگه داشتن آن‌ها جهت نصب دوباره «خیر» را بزنید.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 Name: "assocmxa"; Description: "{cm:AssocMxa}"; GroupDescription: "{cm:AdditionalIcons}"
+Name: "assocoiv"; Description: "{cm:AssocOiv}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
 Source: "{#SrcExe}"; DestDir: "{app}"; Flags: ignoreversion
@@ -85,6 +91,13 @@ Root: HKA; Subkey: "Software\Classes\.mxa"; ValueType: string; ValueName: ""; Va
 Root: HKA; Subkey: "Software\Classes\Modexa.Package"; ValueType: string; ValueName: ""; ValueData: "{cm:MxaType}"; Flags: uninsdeletekey; Tasks: assocmxa
 Root: HKA; Subkey: "Software\Classes\Modexa.Package\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExe},0"; Tasks: assocmxa
 Root: HKA; Subkey: "Software\Classes\Modexa.Package\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: assocmxa
+; .oiv / .oivs: opened in Modexa, which shows the package and asks before installing.
+Root: HKA; Subkey: "Software\Classes\.oiv"; ValueType: string; ValueName: ""; ValueData: "Modexa.OivPackage"; Flags: uninsdeletevalue; Tasks: assocoiv
+Root: HKA; Subkey: "Software\Classes\.oivs"; ValueType: string; ValueName: ""; ValueData: "Modexa.OivPackage"; Flags: uninsdeletevalue; Tasks: assocoiv
+Root: HKA; Subkey: "Software\Classes\.oiv\OpenWithProgids"; ValueType: string; ValueName: "Modexa.OivPackage"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assocoiv
+Root: HKA; Subkey: "Software\Classes\Modexa.OivPackage"; ValueType: string; ValueName: ""; ValueData: "{cm:OivType}"; Flags: uninsdeletekey; Tasks: assocoiv
+Root: HKA; Subkey: "Software\Classes\Modexa.OivPackage\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExe},0"; Tasks: assocoiv
+Root: HKA; Subkey: "Software\Classes\Modexa.OivPackage\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: assocoiv
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent

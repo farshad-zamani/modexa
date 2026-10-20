@@ -12,7 +12,8 @@ public enum PrepareStep
     ModRunner,   // ASI loader + ScriptHookV (+ .NET/Lua runtimes) + OpenRPF on Enhanced -> game root
     GameConfig,  // limit adjusters -> game root; gameconfig.xml -> mods\update\update.rpf\common\data
     Menu,        // trainer/menu (Menyoo) -> game root
-    SanAndreas   // SA: ASI loader + CLEO + Mod Loader -> game root
+    SanAndreas,  // SA: ASI loader + CLEO + Mod Loader -> game root
+    AddonSpawner // Addon Spawner (spawns every installed add-on vehicle) -> game root
 }
 
 /// <summary>Kept for manifest compatibility (v1). New bundles use <see cref="BundleEntry.Maps"/>.</summary>
@@ -114,7 +115,7 @@ public sealed class StepEntry
 public sealed class PrepareManifest
 {
     /// <summary>Manifests older than this layout are ignored in favour of the built-in default.</summary>
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
 
     [JsonPropertyName("version")] public int Version { get; set; } = CurrentVersion;
     [JsonPropertyName("steps")] public List<StepEntry> Steps { get; set; } = new();
@@ -128,6 +129,7 @@ public sealed class PrepareManifest
     private const string ModRunnerUrl = "https://dl.wtmod.com/mods/Gta-V/Mod-Runner-Pack-GtaV-WTMod.com.rar";
     private const string MenyooUrl = "https://dl.wtmod.com/mods/Gta-V/Menyoo-Trainer-GTAV-WTMod.com.rar";
     private const string GameConfigUrl = "https://dl.wtmod.com/mods/Gta-V/Game-Config-Pack-GtaV-WTMod.com.rar";
+    private const string AddonSpawnerUrl = "https://dl.wtmod.com/mods/Gta-V/Addon-Spawner-GtaV-WTMod.com.rar";
 
     private const string RunnerFolder = "Mod Runner Pack GtaV/Mod Runner For GtaV Legacy v3889 & Enhanced v1158.13 and older versions/";
     private const string GameConfigRoot = "Game Config For Add-on Mods Gta V/";
@@ -218,6 +220,24 @@ public sealed class PrepareManifest
                         {
                             new BundleMap { From = "Menyoo 2.4.3/Menyoo.asi", To = "Menyoo.asi" },
                             new BundleMap { From = "Menyoo 2.4.3/menyooStuff/", To = "menyooStuff" }
+                        }
+                    }
+                }
+            },
+
+            new StepEntry
+            {
+                Step = PrepareStep.AddonSpawner,
+                Bundles =
+                {
+                    new BundleEntry
+                    {
+                        // "Addon Spawner <version>\AddonSpawner.asi" + its "AddonSpawner\" folder, into the game root.
+                        Url = AddonSpawnerUrl,
+                        Maps =
+                        {
+                            new BundleMap { From = "Addon Spawner */AddonSpawner.asi", To = "AddonSpawner.asi" },
+                            new BundleMap { From = "Addon Spawner */AddonSpawner/", To = "AddonSpawner" }
                         }
                     }
                 }

@@ -53,7 +53,8 @@ public enum GameConfigOutcome
     NeedsModsUpdateRpf,  // mods\update\update.rpf doesn't exist yet
     UpdateRpfEncrypted,  // it exists but is still encrypted (not OPEN)
     NoGameConfigEntry,   // the archive has no common\data\gameconfig.xml to replace
-    Skipped              // the user cancelled the variant choice
+    Skipped,             // the user cancelled the variant choice
+    GameTooOld           // the pack has no config for this (old) build: nothing installed, update the game
 }
 
 public sealed record PrepareResult(
@@ -129,6 +130,13 @@ public sealed class PrepareService
             // The config made for this exact build (or its family, e.g. "1.0.35" for 35xx).
             var pick = GameConfigVersions.Pick(files, gc, build)
                        ?? throw new PrepareLayoutException(gc.VersionsRoot ?? gc.Folder);
+            // No config was made for this old build — the newest would not run on it. Install nothing
+            // (the limit adjusters belong with a fitting config) and ask the user to update the game.
+            if (pick.TooOld)
+            {
+                progress?.Report(new PrepareProgress(PreparePhase.Done, 100));
+                return new PrepareResult(0, GameConfigOutcome.GameTooOld, null, pick.Newest, false);
+            }
             configFolder = pick.Folder;
             configFor = pick.ForBuild;
             configName = pick.Folder.TrimEnd('/').Split('/')[^1]; // e.g. "Gta Config v34 for v 1.0.3407"
@@ -254,6 +262,8 @@ public sealed class PrepareService
         }
 
         if (outcome != GameConfigOutcome.Skipped) outcome = installed.gcOutcome;
+        // Installed again: a "disabled" entry of this step is no longer needed.
+        try { DisabledModsStore.RemoveSetup(gameFolder, step); } catch { }
         progress?.Report(new PrepareProgress(PreparePhase.Done, 100));
 
         return new PrepareResult(installed.count, outcome, variant, configFor, mismatch && build > 0, versionWarning, configName, modsRpfCreated, modsRpfError);
@@ -273,6 +283,7 @@ public sealed class PrepareService
     {
         PrepareStep.GameConfig => "GameConfig",
         PrepareStep.Menu => "Menyoo",
+        PrepareStep.AddonSpawner => "Addon Spawner",
         _ => "Mod Runner"
     };
 

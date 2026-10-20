@@ -194,7 +194,7 @@ public static class ModsArchives
         string full = Path.Combine(gameFolder, rel);
         if (!File.Exists(full) || InUse(gameFolder, archive, records, backup)) return false;
         string? stamp = backup.StampOf(rel);
-        return stamp != null && stamp == FileStamp.Of(full);
+        return FileStamp.Matches(stamp, full);
     }
 
     /// <summary>Deletes Modexa's copy of an archive (the game falls back to its own original).</summary>

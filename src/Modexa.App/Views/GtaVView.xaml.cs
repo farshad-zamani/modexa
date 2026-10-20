@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using Modexa.App.Navigation;
 using Modexa.App.Services;
@@ -220,6 +220,82 @@ public partial class GtaVView : UserControl, IInstallHost
     private void ModRunner_Click(object sender, RoutedEventArgs e) => _ = StepClickAsync(StepModRunner, PrepareStep.ModRunner);
     private void GameConfig_Click(object sender, RoutedEventArgs e) => _ = StepClickAsync(StepGameConfig, PrepareStep.GameConfig);
     private void Menu_Click(object sender, RoutedEventArgs e) => _ = StepClickAsync(StepMenu, PrepareStep.Menu);
+    private void Spawner_Click(object sender, RoutedEventArgs e) => _ = StepClickAsync(StepSpawner, PrepareStep.AddonSpawner);
+
+    /// <summary>
+    /// One click: Mod Runner, then GameConfig with the game's normal traffic — no questions. Steps
+    /// already installed are skipped; one result at the end.
+    /// </summary>
+    private async void PrepareAll_Click(object sender, RoutedEventArgs e)
+    {
+        if (_install == null) { DialogWindow.Show(Loc.Instance["Dl_NoGameFolder"], DialogKind.Warning); return; }
+        if (_cts != null) return;
+        string folder = _install.Folder;
+        var done = await Task.Run(() => PrepareService.InstalledSteps(folder));
+        var todo = new[] { PrepareStep.ModRunner, PrepareStep.GameConfig }.Where(s => !done.ContainsKey(s)).ToList();
+        if (todo.Count == 0) { DialogWindow.Show(Loc.Instance["GtaV_PrepareAll_Ready"], DialogKind.Success); return; }
+
+        _cts = new CancellationTokenSource();
+        Busy.Show("Dl_Downloading", cancellable: true);
+        var lines = new List<string>();
+        var kind = DialogKind.Success;
+        int build = _install.Version?.Build ?? 0;
+        try
+        {
+            for (int i = 0; i < todo.Count; i++)
+            {
+                var step = todo[i];
+                string stepText = Loc.Instance.Format("Busy_Step", i + 1, todo.Count);
+                bool copyStep = step == PrepareStep.GameConfig && !await Task.Run(() => Modexa.Core.Rpf.ModsArchives.IsReady(folder));
+                var progress = new Progress<PrepareProgress>(p => Busy.Update(PrepareBusy.Phase(p, copyStep) with { Step = stepText }));
+                var result = await new PrepareService(_manifest).RunAsync(GameCatalog.ForEdition(_edition), step, folder, _install.Edition, build,
+                    versionToken: null, progress, _cts.Token,
+                    // The game's own (normal) traffic, never asked.
+                    (variants, def) => Task.FromResult<string?>(variants.FirstOrDefault(GameConfigLabels.IsStock) ?? def));
+                if (result.GameConfig == GameConfigOutcome.GameTooOld)
+                {
+                    Busy.Hide();
+                    ShowResult(step, result, build);
+                    return;
+                }
+                if (result.GameConfig is GameConfigOutcome.NeedsModsUpdateRpf or GameConfigOutcome.UpdateRpfEncrypted or GameConfigOutcome.NoGameConfigEntry)
+                {
+                    kind = DialogKind.Warning;
+                    lines.Add(Loc.Instance.Format("Prep_NeedsModsRpf", result.ModsRpfError != null
+                        ? ModsArchiveMessages.For(result.ModsRpfError) : Loc.Instance.Format("ModsRpf_Failed", result.GameConfig.ToString())));
+                }
+                else lines.Add("✓ " + ModInstallService.DisplayName(new ModInstallRecord { Setup = step, Game = "GtaV" }));
+                if (step == PrepareStep.GameConfig && !string.IsNullOrWhiteSpace(result.ConfigName))
+                    lines.Add(Loc.Instance.Format("Prep_ConfigPicked", "‎" + result.ConfigName + "‎",
+                        build > 0 ? build.ToString(System.Globalization.CultureInfo.InvariantCulture) : "?"));
+                if (result.BuildMismatch && result.ConfigFor is { } cfg) { kind = DialogKind.Warning; lines.Add(Loc.Instance.Format("Prep_BuildMismatch", cfg, build)); }
+            }
+            Busy.Hide();
+            DialogWindow.Show(Loc.Instance["GtaV_PrepareAll_Done"] + "\n\n" + string.Join("\n", lines), kind);
+        }
+        catch (OperationCanceledException) { Busy.Hide(); }
+        catch (PrepareNotConfiguredException) { Busy.Hide(); DialogWindow.Show(Loc.Instance["Prepare_NotConfigured"], DialogKind.Info); }
+        catch (PrepareLayoutException ex)
+        {
+            Busy.Hide();
+            Modexa.Core.Diagnostics.Log.Error("Prepare layout", ex);
+            DialogWindow.Show(Loc.Instance["Prepare_LayoutChanged"], DialogKind.Error);
+        }
+        catch (Exception ex)
+        {
+            Busy.Hide();
+            Modexa.Core.Diagnostics.Log.Error("Prepare all", ex);
+            DialogWindow.Show($"{Loc.Instance["Dl_Failed"]}\n\n{ex.Message}", DialogKind.Error);
+        }
+        finally
+        {
+            _cts?.Dispose();
+            _cts = null;
+            await RefreshPrepareStateAsync();
+            InstallPanel.Refresh();
+            await UpdateCleanLaunchStateAsync();
+        }
+    }
 
     private Task StepClickAsync(StepCard card, PrepareStep step) => card.IsDone ? RemoveStepAsync(step) : RunStepAsync(step);
 
@@ -329,6 +405,15 @@ public partial class GtaVView : UserControl, IInstallHost
     {
         var lines = new List<string>();
         var kind = DialogKind.Success;
+        if (r.GameConfig == GameConfigOutcome.GameTooOld)
+        {
+            // The game is too old for every config in the pack: it has to be updated first.
+            string b = build > 0 ? build.ToString(System.Globalization.CultureInfo.InvariantCulture) : "?";
+            int pick = DialogWindow.Ask(Loc.Instance.Format("Prep_GameTooOld", b, r.ConfigFor ?? "?"),
+                new[] { Loc.Instance["Prep_GameTooOld_Open"], Loc.Instance["Common_Close"] });
+            if (pick == 0) MainWindow.OpenUrl(Modexa.Core.Remote.Endpoints.GameUpdates);
+            return;
+        }
         switch (r.GameConfig)
         {
             case GameConfigOutcome.Applied:
@@ -355,7 +440,12 @@ public partial class GtaVView : UserControl, IInstallHost
                 lines.Add(Loc.Instance["Prep_GameConfigSkipped"]);
                 break;
             default:
-                lines.Add(Loc.Instance[step == PrepareStep.ModRunner ? "Prep_RunnerDone" : "Prep_MenuDone"]);
+                lines.Add(Loc.Instance[step switch
+                {
+                    PrepareStep.ModRunner => "Prep_RunnerDone",
+                    PrepareStep.AddonSpawner => "Prep_SpawnerDone",
+                    _ => "Prep_MenuDone"
+                }]);
                 break;
         }
         if (r.BuildMismatch && r.ConfigFor is { } cfg)
@@ -374,6 +464,10 @@ public partial class GtaVView : UserControl, IInstallHost
         StepGameConfig.SetDone(state.ContainsKey(PrepareStep.GameConfig),
             state.TryGetValue(PrepareStep.GameConfig, out var gc) && gc.Version != null ? GameConfigLabels.Label(gc.Version) : null);
         StepMenu.SetDone(state.ContainsKey(PrepareStep.Menu));
+        StepSpawner.SetDone(state.ContainsKey(PrepareStep.AddonSpawner));
+        // The one-click card says so once both base steps are in.
+        bool allReady = state.ContainsKey(PrepareStep.ModRunner) && state.ContainsKey(PrepareStep.GameConfig);
+        PrepareAllDesc.Bind(TextBlock.TextProperty, allReady ? "GtaV_PrepareAll_Ready" : "GtaV_PrepareAll_Desc");
 
         bool ready = rpf == GameConfigOutcome.Applied;
         ModsRpfChip.Visibility = Visibility.Visible;

@@ -30,6 +30,14 @@ public sealed class OivPackageInfo
     public List<string> DiskTargets { get; set; } = new();
     /// <summary>Total bytes of content the package installs (drives the progress bar).</summary>
     public long TotalBytes { get; set; }
+    /// <summary>How many top-level &lt;delete&gt; operations it has.</summary>
+    public int Deletes { get; set; }
+    /// <summary>
+    /// The package is a mod's own "uninstaller" (it puts vanilla files back and deletes the mod's
+    /// folders). Those are made for OpenIV's own bookkeeping; in Modexa a mod is removed with
+    /// "Remove mod", so such a package is never installed.
+    /// </summary>
+    public bool IsUninstaller { get; set; }
 }
 
 /// <summary>Outcome of applying a package: operations applied vs skipped (unsupported).</summary>
@@ -104,6 +112,7 @@ public static class OivInstaller
                 case "add" or "delete":
                     string dest = op.InnerText.Trim();
                     if (dest.Length > 0) info.DiskTargets.Add(DiskRelative(dest));
+                    if (op.Name.Equals("delete", StringComparison.OrdinalIgnoreCase)) info.Deletes++;
                     break;
                 case "xml" or "text":
                     string p = op.GetAttribute("path");
@@ -112,7 +121,28 @@ public static class OivInstaller
             }
         }
         info.TotalBytes = ops.Sum(o => Weight(ctx, o));
+        info.IsUninstaller = LooksLikeUninstaller(info, Path.GetFileName(pkg.Source.TrimEnd('\\', '/')));
         return info;
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex UninstallWords = new(
+        @"un-?install|remover\b|removal\b|حذف\s*کننده|حذف‌کننده|پاک\s*کننده|آنینستال",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static readonly System.Text.RegularExpressions.Regex VanillaWords = new(
+        @"\b(restore|revert|back\s+to|return)\b.{0,40}\bvanilla\b|\bvanilla\s+(settings|files|restore)\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// A mod's uninstaller package (e.g. "Uninstaller / Vanilla Settings": restores vanilla files and
+    /// deletes the mod's dlcpacks). Judged by its name, file name and description.
+    /// </summary>
+    public static bool LooksLikeUninstaller(OivPackageInfo info, string? fileName)
+    {
+        string name = info.Name ?? "", file = fileName ?? "", desc = info.Description ?? "";
+        if (UninstallWords.IsMatch(name) || UninstallWords.IsMatch(file)) return true;
+        // "This add-on will restore all of your modded files to vanilla" — installers don't say that.
+        return VanillaWords.IsMatch(name) || VanillaWords.IsMatch(desc);
     }
 
     /// <summary>
@@ -155,6 +185,11 @@ public static class OivInstaller
             ctx.Report(force: true);
             foreach (var op in ops)
                 RunTopLevel(ctx, op);
+            // A file the package put on disk and then edited as an archive (its own dlc.rpf): what the
+            // mod leaves behind is the edited file, so that is the version to recognise on uninstall.
+            foreach (var f in record.Files.Where(f => !f.WasDeleted && f.Journal == null))
+                if (record.ArchiveEdits.Any(e => ModUninstaller.SameDiskFile(e.Archive, f.Dest)))
+                    f.WrittenStamp = FileStamp.Of(Path.Combine(ctx.GameFolder, f.Dest));
             SaveIcon(pkg, record);
         }
         catch (Exception ex)

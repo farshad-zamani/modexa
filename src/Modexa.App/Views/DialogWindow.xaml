@@ -51,6 +51,18 @@
                                VerticalAlignment="Center" TextWrapping="Wrap" Cursor="Hand"/>
                 </StackPanel>
                 <ComboBox x:Name="ChoiceBox" Margin="0,14,0,0" Visibility="Collapsed" MaxDropDownHeight="320"/>
+                <!-- Optional tick list (several mods found: the user picks which ones to install). -->
+                <Border x:Name="ChecksHeader" Margin="0,14,0,0" Visibility="Collapsed"/>
+                <!-- Optional text input (e.g. the place a mod's author gives for its files). -->
+                <StackPanel x:Name="InputRow" Margin="0,14,0,0" Visibility="Collapsed">
+                    <TextBox x:Name="InputText" Style="{StaticResource InputBox}" FlowDirection="LeftToRight"/>
+                    <TextBlock x:Name="InputHint" Style="{StaticResource Text.Desc}" FontSize="12" Margin="2,6,0,0"
+                               FlowDirection="LeftToRight" TextWrapping="Wrap"/>
+                </StackPanel>
+                <ScrollViewer x:Name="ChecksScroll" Margin="0,6,0,0" MaxHeight="380" Visibility="Collapsed"
+                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="ChecksPanel"/>
+                </ScrollViewer>
             </StackPanel>
 
             <StackPanel Grid.Row="2" Grid.ColumnSpan="2" Orientation="Horizontal"

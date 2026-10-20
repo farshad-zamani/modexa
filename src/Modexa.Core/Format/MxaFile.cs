@@ -39,6 +39,13 @@ public static class MxaFile
 
     private const int FlagLicensed = 1;
 
+    /// <summary>
+    /// Key of a FREE package (made with "Free mod" in the packer): public on purpose — a free mod needs
+    /// no license, so every Modexa edition opens it. Licensed packages use a per-product key instead,
+    /// which only the license server hands out.
+    /// </summary>
+    public static readonly byte[] FreeKey = SHA256.HashData(Encoding.UTF8.GetBytes("modexa-free-package-v1"));
+
     /// <summary>True if the file starts with the .mxa magic.</summary>
     public static bool IsMxaFile(string path)
     {

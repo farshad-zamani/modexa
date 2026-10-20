@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
@@ -344,7 +344,7 @@ public partial class MainWindow : Window, INavigator
             System.Windows.Threading.DispatcherPriority.Background);
     }
 
-    private static readonly string[] DropExts = { ".mxa", ".oiv", ".oivs", ".rpf", ".zip" };
+    private static readonly string[] DropExts = { ".mxa", ".oiv", ".oivs", ".rpf", ".zip", ".rar", ".7z" };
 
     /// <summary>
     /// Mod files opened from Explorer or dropped on the window: they are installed on their game's
@@ -442,7 +442,8 @@ public partial class MainWindow : Window, INavigator
     {
         if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return new List<string>();
         var files = (string[])e.Data.GetData(DataFormats.FileDrop);
-        return files.Where(f => DropExts.Any(x => f.EndsWith(x, StringComparison.OrdinalIgnoreCase))).ToList();
+        // Folders too: a folder of mods is read like an archive (on the GTA V page).
+        return files.Where(f => DropExts.Any(x => f.EndsWith(x, StringComparison.OrdinalIgnoreCase)) || System.IO.Directory.Exists(f)).ToList();
     }
 
     // ---- Language ------------------------------------------------------------------------------

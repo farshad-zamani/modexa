@@ -40,7 +40,7 @@ downloaded once and only again when it changes on the server:
 | GTA V Legacy / Enhanced | Mod Runner (ASI loader, ScriptHookV, ScriptHookVDotNet, Lua, OpenIV.asi / OpenRPF), GameConfig for add-on mods picked for your exact build (normal traffic by default, busier or quieter streets as an advanced option; + heap and packfile adjusters on Legacy), Menyoo trainer |
 | GTA San Andreas, GTA IV, Red Dead Redemption, Red Dead Redemption 2, Cyberpunk 2077 | The Mod Runner pack made for your game version |
 
-Once a step is installed its button turns into **Remove mod**, and it also appears in the game's **Installed** list (and in My Mods); the originals it replaced are restored exactly. After installing the GameConfig, Modexa tells you which config of the pack was chosen for your build (e.g. *Gta Config v34 for v 1.0.3407*). **Revert** removes everything Modexa did in one go.
+Once a step is installed its button turns into **Remove mod**, and it also appears in the game's **Installed** list (and in My Mods); the originals it replaced are restored exactly. After installing the GameConfig, Modexa tells you which config of the pack was chosen for your build (e.g. *Gta Config v34 for v 1.0.3407*). If your game build is older than every GameConfig in the pack, nothing is installed and Modexa asks you to update the game first (e.g. from [gameever.ir](https://gameever.ir)) — a config made for another build would stop the game from starting. **Revert** removes everything Modexa did in one go.
 
 ### Editable `update.rpf`, created automatically
 `gameconfig.xml`, add-on mods and most OIV packages need an editable copy of the game's
@@ -65,6 +65,10 @@ files), the time left and the file being worked on:
 - archive operations at any nesting depth: add / replace / delete files (binary, resource and nested
   `.rpf`), XML edits (add *First / Last / Before / After*, replace, remove) and text edits (add,
   insert, replace, delete), and deleting files or whole folders on disk (put back on removal);
+- several packages at once open a tick list: choose which to install (optional files, or alternatives that
+  must not be installed together); parts always install in their order;
+- a mod's own OpenIV *uninstaller* package is recognised and never installed (in Modexa a mod is removed
+  with **Remove mod**);
 - `.oivs` "super" packages install with their default selection;
 - if something fails part-way, everything already done is rolled back.
 
@@ -88,6 +92,10 @@ reverse:
 The **Installed mods** list on each game page shows what is installed there — mods and prepare steps —
 each with its own **Remove mod** button. **My Mods** shows everything installed on every game in one place,
 with the same buttons. Tick several mods (or **Select all**) to disable, enable or remove them together.
+
+### Free Modexa mods
+Modexa packages (`.mxa`) published as free mods install in every edition, no license needed — on every
+supported game.
 
 ### Turn mods off and on — free
 **Disable** takes a mod out of the game without forgetting it: it is removed exactly like *Remove mod*
@@ -116,7 +124,7 @@ If the mod file was moved or deleted in the meantime, Modexa asks for it.
 | Disable / enable mods, bulk actions | ✅ | ✅ | ✅ |
 | Licensed Modexa mods (`.mxa`) from [WTMod.com](https://wtmod.com) | — | ✅ | ✅ |
 | Clean launch (safe for GTA Online) and one-click revert | — | ✅ | ✅ |
-| Install any other mod: add-on `.rpf`, `.zip`, folders | — | — | ✅ |
+| Install any other mod: `.zip` / `.rar` / `.7z` packs, folders, add-ons, script mods | — | — | ✅ |
 | Theme | Dark / cyan | Choose: cyan or gold | Choose: cyan, gold or black + gold |
 
 The download here is the **Free** edition. A license upgrades the *same* installation to Plus or Pro,

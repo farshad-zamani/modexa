@@ -32,14 +32,23 @@
                                Text="{Binding [Mods_Drop_Here], Source={x:Static i18n:Loc.Instance}}"/>
                     <TextBlock x:Name="DropHint" Style="{StaticResource Text.Desc}" Margin="0,4,0,0"/>
                 </StackPanel>
-                <Button x:Name="BtnChoose" Grid.Column="2" Style="{StaticResource PrimaryButton}" VerticalAlignment="Center"
-                        Click="Choose_Click">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource Icon}" FontSize="15" Text="&#xE8E5;"/>
-                        <TextBlock Margin="10,0,0,0" VerticalAlignment="Center"
-                                   Text="{Binding [Mods_ChooseFile], Source={x:Static i18n:Loc.Instance}}"/>
-                    </StackPanel>
-                </Button>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <!-- GTA V: a whole folder of mods too (read like an archive). -->
+                    <Button x:Name="BtnChooseFolder" Style="{StaticResource GhostButton}" Margin="0,0,10,0" Click="ChooseFolder_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Icon}" FontSize="15" Text="&#xE8B7;"/>
+                            <TextBlock Margin="10,0,0,0" VerticalAlignment="Center"
+                                       Text="{Binding [Mods_ChooseFolder], Source={x:Static i18n:Loc.Instance}}"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="BtnChoose" Style="{StaticResource PrimaryButton}" Click="Choose_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Icon}" FontSize="15" Text="&#xE8E5;"/>
+                            <TextBlock Margin="10,0,0,0" VerticalAlignment="Center"
+                                       Text="{Binding [Mods_ChooseFile], Source={x:Static i18n:Loc.Instance}}"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
             </Grid>
         </Grid>
 

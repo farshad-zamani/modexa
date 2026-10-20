@@ -22,7 +22,7 @@ public interface IInstallHost
 
 /// <summary>
 /// "Install mods" section of a game page: drag &amp; drop or pick files (.oiv/.oivs on GTA V for
-/// every tier, licensed .mxa packages, and for Pro also add-on .rpf / .zip), then everything
+/// every tier, licensed .mxa packages, and for Pro any mod: .zip / .rar / .7z, folders, add-on .rpf), then everything
 /// installed into this game folder — mods and prepare steps alike — each removable with one click.
 /// </summary>
 public partial class ModInstallPanel : UserControl, IModListHost
@@ -71,6 +71,7 @@ public partial class ModInstallPanel : UserControl, IModListHost
         bool pro = ThemeService.CurrentTier == LicenseTier.Pro;
         SectionDesc.Text = Loc.Instance[GtaV ? "Mods_Section_Desc_GtaV" : "Mods_Section_Desc_Other"];
         DropHint.Text = Loc.Instance[GtaV ? (pro ? "Mods_Drop_Hint_GtaV_Pro" : "Mods_Drop_Hint_GtaV") : "Mods_Drop_Hint_Other"];
+        BtnChooseFolder.Visibility = GtaV ? Visibility.Visible : Visibility.Collapsed;
         Refresh(); // rows are built in code: rebuild them in the new language / direction
     }
 
@@ -189,12 +190,20 @@ public partial class ModInstallPanel : UserControl, IModListHost
         string filter = !GtaV
             ? $"{Loc.Instance["Mods_Filter_Mxa"]} (*.mxa)|*.mxa"
             : pro
-                ? $"{Loc.Instance["Mods_Filter_All"]} (*.oiv;*.oivs;*.mxa;*.rpf;*.zip)|*.oiv;*.oivs;*.mxa;*.rpf;*.zip|OpenIV (*.oiv;*.oivs)|*.oiv;*.oivs|Modexa (*.mxa)|*.mxa"
+                ? $"{Loc.Instance["Mods_Filter_All"]} (*.oiv;*.oivs;*.mxa;*.zip;*.rar;*.7z;*.rpf)|*.oiv;*.oivs;*.mxa;*.zip;*.rar;*.7z;*.rpf|OpenIV (*.oiv;*.oivs)|*.oiv;*.oivs|Modexa (*.mxa)|*.mxa"
                 : $"{Loc.Instance["Mods_Filter_All"]} (*.oiv;*.oivs;*.mxa)|*.oiv;*.oivs;*.mxa|OpenIV (*.oiv;*.oivs)|*.oiv;*.oivs|Modexa (*.mxa)|*.mxa";
         // Several files at once: a mod split into parts is installed part 1, part 2, … in one go.
         using var dlg = new WinForms.OpenFileDialog { Filter = filter, Title = Loc.Instance["Mods_ChooseFile"], Multiselect = true };
         if (dlg.ShowDialog() == WinForms.DialogResult.OK)
             _ = InstallAsync(dlg.FileNames);
+    }
+
+    /// <summary>A folder of mods (GTA V): read like an archive, the user ticks what to install.</summary>
+    private void ChooseFolder_Click(object sender, RoutedEventArgs e)
+    {
+        using var dlg = new WinForms.FolderBrowserDialog { Description = Loc.Instance["Mods_ChooseFolder_Tip"], UseDescriptionForTitle = true };
+        if (dlg.ShowDialog() == WinForms.DialogResult.OK)
+            _ = InstallAsync(new[] { dlg.SelectedPath });
     }
 
     /// <summary>Installs a file into this page's game (also used for files opened from Explorer).</summary>
@@ -248,10 +257,10 @@ public partial class ModInstallPanel : UserControl, IModListHost
     {
         if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return new List<string>();
         var files = (string[])e.Data.GetData(DataFormats.FileDrop);
-        // Extension check only: DragOver fires continuously, so no file I/O on this path.
+        // Extension check (plus a cheap "is it a folder" for GTA V: a folder of mods is read like an archive).
         return files.Where(f => f.EndsWith(MxaFile.Extension, StringComparison.OrdinalIgnoreCase)
-                                || (GtaV && ModInstallService.OivExtensions.Concat(ModInstallService.RawExtensions)
-                                    .Any(x => f.EndsWith(x, StringComparison.OrdinalIgnoreCase))))
+                                || (GtaV && (ModInstallService.OivExtensions.Concat(ModInstallService.RawExtensions)
+                                    .Any(x => f.EndsWith(x, StringComparison.OrdinalIgnoreCase)) || Directory.Exists(f))))
             .ToList();
     }
 

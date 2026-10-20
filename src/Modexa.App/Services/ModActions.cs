@@ -149,6 +149,8 @@ public static class ModActions
         var skipped = new List<string>();
         foreach (var r in records.OrderByDescending(r => r.InstalledUtc))
         {
+            // A prepare step comes back by running the step again: no mod file needed.
+            if (r.Setup != null) { plan.Add((r, "")); continue; }
             string? path = r.SourcePath != null && (File.Exists(r.SourcePath) || Directory.Exists(r.SourcePath)) ? r.SourcePath : null;
             if (path == null)
             {
@@ -182,10 +184,11 @@ public static class ModActions
                 Source = r.Source ?? Path.GetFileName(path),
                 Version = r.Version,
                 Author = r.Author,
-                OriginalPath = path,
+                Setup = r.Setup,
+                OriginalPath = r.Setup == null ? path : null,
                 InstalledUtc = r.InstalledUtc
             };
-            entry.KeptPath = await Task.Run(() => DisabledModsStore.Keep(entry.Id, path));
+            if (r.Setup == null) entry.KeptPath = await Task.Run(() => DisabledModsStore.Keep(entry.Id, path));
             entry.IconFile = DisabledModsStore.KeepIcon(entry.Id, r.IconFile);
 
             var stepProgress = new Progress<string>(s => phase.Report(new InstallPhase("Mods_Disabling", null, s.Replace('/', '\\'), step, title, icon)));
@@ -232,6 +235,11 @@ public static class ModActions
         for (int i = 0; i < ordered.Count; i++)
         {
             var m = ordered[i];
+            if (m.Setup is { } step)
+            {
+                results.Add(await EnableStepAsync(m, step, phase));
+                continue;
+            }
             // Installed again meanwhile (from the same file): nothing to do but forget the entry.
             if (InstalledModsStore.ForFolder(m.GameFolder).Any(r => string.Equals(r.Source, m.Source, StringComparison.OrdinalIgnoreCase)))
             {
@@ -266,6 +274,32 @@ public static class ModActions
         var shown = results.Where(r => !r.Cancelled).ToList();
         if (shown.Count == 0) return results.Count > 0 ? new ModResult(false, "", Cancelled: true) : new ModResult(true, "");
         return new ModResult(shown.All(r => r.Success), string.Join("\n\n", shown.Select(r => r.Message)));
+    }
+
+    /// <summary>A disabled prepare step: run again with the choice it had (e.g. the GameConfig traffic variant), no questions.</summary>
+    private static async Task<ModResult> EnableStepAsync(DisabledMod m, Modexa.Core.Prepare.PrepareStep step, IProgress<InstallPhase> phase)
+    {
+        var target = TargetFor(m.Game, m.GameFolder, m.GameTitle);
+        try
+        {
+            if (await Task.Run(() => GameProcess.IsRunning(m.GameFolder))) return new ModResult(false, Loc.Instance["Mods_GameRunning"]);
+            var manifest = await Task.Run(Modexa.Core.Prepare.PrepareManifest.LoadLocal);
+            var (build, token) = await Task.Run(() => target.IsGtaV
+                ? (GameVersion.Detect(m.GameFolder)?.Build ?? 0, (string?)null)
+                : (0, SimpleGames.Has(target.Id) ? SimpleGames.Get(target.Id).DetectVersion(m.GameFolder) : null));
+            var progress = new Progress<Modexa.Core.Prepare.PrepareProgress>(p => phase.Report(PrepareBusy.Phase(p, copyStep: false) with { Title = m.Name }));
+            var r = await new Modexa.Core.Prepare.PrepareService(manifest).RunAsync(target.Id, step, m.GameFolder, target.Edition, build, token,
+                progress, default, (variants, def) => Task.FromResult<string?>(m.Version != null && variants.Contains(m.Version) ? m.Version : def));
+            if (r.GameConfig == Modexa.Core.Prepare.GameConfigOutcome.GameTooOld)
+                return new ModResult(false, Loc.Instance.Format("Prep_GameTooOld", build, r.ConfigFor ?? "?"));
+            DisabledModsStore.Remove(m.Id);
+            return new ModResult(true, Loc.Instance.Format("Mods_Installed_Ok", m.Name));
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Enable step", ex);
+            return new ModResult(false, $"{m.Name}: {Loc.Instance["Dl_Failed"]}\n{ex.Message}");
+        }
     }
 
     // ---- helpers -----------------------------------------------------------------------------------

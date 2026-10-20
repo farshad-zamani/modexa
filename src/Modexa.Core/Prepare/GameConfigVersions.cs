@@ -7,7 +7,12 @@ namespace Modexa.Core.Prepare;
 /// <param name="Folder">Archive folder holding the variants (e.g. ".../Old Versions/Gta Config v34 for v 1.0.3407").</param>
 /// <param name="ForBuild">The build(s) it was made for, as shown to the user: "3407", or "34xx" for a family.</param>
 /// <param name="Matches">True when it was made for this build (or its family); false = the newest one, as a fallback.</param>
-public sealed record GameConfigPick(string Folder, string ForBuild, bool Matches);
+/// <param name="TooOld">
+/// The game is older than the builds the pack has configs for (or between two of them): no config fits,
+/// and the newest one would not run on it. The user has to update the game first.
+/// </param>
+/// <param name="Newest">The newest build the pack has a config for (shown to the user).</param>
+public sealed record GameConfigPick(string Folder, string ForBuild, bool Matches, bool TooOld = false, string? Newest = null);
 
 /// <summary>
 /// Picks the gameconfig made for the game's build from a pack that keeps one folder per build:
@@ -51,8 +56,16 @@ public static class GameConfigVersions
             .ToList();
         var best = matching.FirstOrDefault();
         bool matches = best != null;
-        best ??= candidates.OrderByDescending(c => c.Config).ThenByDescending(c => c.Digits).First();
-        return new GameConfigPick(best.Folder, Label(best.Digits), matches || build == 0);
+        var newest = candidates.OrderByDescending(c => c.Config).ThenByDescending(c => c.Digits).First();
+        if (best == null && build > 0)
+        {
+            // Newer than every config (a fresh game update): the newest config, with a warning. Older,
+            // or a build in between that no config covers: nothing fits — the game must be updated.
+            bool newer = candidates.Where(c => c.Digits.Length > 0).All(c => build > Highest(c.Digits, b.Length));
+            if (!newer) return new GameConfigPick(newest.Folder, Label(newest.Digits), false, TooOld: true, Newest: Label(newest.Digits));
+        }
+        best ??= newest;
+        return new GameConfigPick(best.Folder, Label(best.Digits), matches || build == 0, Newest: Label(newest.Digits));
     }
 
     private sealed record Candidate(string Folder, double Config, string Digits);
@@ -85,6 +98,10 @@ public static class GameConfigVersions
         }
         return found.Values.ToList();
     }
+
+    /// <summary>The highest build a config's digits cover: "3889" -> 3889, "35" -> 3599 (for 4-digit builds).</summary>
+    private static long Highest(string digits, int buildLength)
+        => long.TryParse(digits.Length >= buildLength ? digits : digits.PadRight(buildLength, '9'), NumberStyles.None, CultureInfo.InvariantCulture, out long v) ? v : long.MaxValue;
 
     private static string Label(string digits) => digits.Length switch
     {

@@ -76,6 +76,49 @@ public class OivInstallerTests
     }
 
     [Fact]
+    public void A_big_added_dlc_is_removed_even_after_another_program_touched_its_time()
+    {
+        using var s = new Sandbox();
+        string pkg = s.Package("<add source=\"big\\dlc.rpf\">update\\x64\\dlcpacks\\big\\dlc.rpf</add>", new() { ["big/dlc.rpf"] = "x" });
+        var data = new byte[33 * 1024 * 1024];
+        new Random(1).NextBytes(data);
+        File.WriteAllBytes(Path.Combine(pkg, "content", "big", "dlc.rpf"), data);
+
+        var rec = s.Install(pkg);
+        string dlc = Path.Combine(s.Game, "mods", "update", "x64", "dlcpacks", "big", "dlc.rpf");
+        Assert.True(File.Exists(dlc));
+        File.SetLastWriteTimeUtc(dlc, DateTime.UtcNow.AddHours(-5)); // e.g. browsed in OpenIV's edit mode
+
+        var un = ModUninstaller.Uninstall(rec);
+        Assert.True(un.Success);
+        Assert.Empty(un.Kept);
+        Assert.False(Directory.Exists(Path.GetDirectoryName(dlc)));
+    }
+
+    [Fact]
+    public void A_dlc_the_package_adds_and_then_edits_is_removed_as_a_whole()
+    {
+        using var s = new Sandbox();
+        string rpf = Path.Combine(Path.GetTempPath(), "own_" + Guid.NewGuid().ToString("N") + ".rpf");
+        RpfBuilder.CreateOpen(rpf, new Dictionary<string, byte[]> { ["setup2.xml"] = Encoding.UTF8.GetBytes("<x/>") });
+        string pkg = s.Package(
+            "<add source=\"own\\dlc.rpf\">update\\x64\\dlcpacks\\own\\dlc.rpf</add>" +
+            "<archive path=\"update\\x64\\dlcpacks\\own\\dlc.rpf\" createIfNotExist=\"False\" type=\"RPF7\"><add source=\"extra.meta\">\\common\\data\\extra.meta</add></archive>",
+            new() { ["own/dlc.rpf"] = "x", ["extra.meta"] = "<extra/>" });
+        File.Copy(rpf, Path.Combine(pkg, "content", "own", "dlc.rpf"), true);
+        File.Delete(rpf);
+
+        var rec = s.Install(pkg);
+        string dlc = Path.Combine(s.Game, "mods", "update", "x64", "dlcpacks", "own", "dlc.rpf");
+        Assert.Equal("<extra/>", RpfEditor.Open(dlc).ReadText("common/data/extra.meta"));
+
+        var un = ModUninstaller.Uninstall(rec);
+        Assert.True(un.Success);
+        Assert.Empty(un.Kept);
+        Assert.False(File.Exists(dlc));
+    }
+
+    [Fact]
     public void Folder_delete_removes_the_folder_and_uninstall_puts_it_back()
     {
         using var s = new Sandbox();

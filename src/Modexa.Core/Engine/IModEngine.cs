@@ -1,4 +1,4 @@
-using Modexa.Core.Install;
+﻿using Modexa.Core.Install;
 using Modexa.Core.Licensing;
 
 namespace Modexa.Core.Engine;
@@ -39,13 +39,62 @@ public interface IModEngine
 /// <summary>Pro-only capabilities (present only in the Pro build of the module).</summary>
 public interface IProModEngine : IModEngine
 {
-    /// <summary>Installs a third-party mod: .oiv/.oivs, an add-on dlc.rpf, a .zip or a folder.</summary>
-    ModInstallRecord InstallRaw(string path, string gameFolder, string game, string workDir);
+    /// <summary>Lists what a mod the user gave holds (nothing is installed).</summary>
+    ModPlan Plan(string path, string workDir, IProgress<int>? progress = null);
+
+    /// <summary>Installs one listed item of kind <see cref="ModPlanKind.Mod"/>.</summary>
+    ModInstallRecord Install(ModPlan plan, ModPlanItem item, string gameFolder, string game);
+
+    /// <summary>
+    /// Installs an item of kind <see cref="ModPlanKind.Manual"/> into the place the user gives (as the
+    /// mod's author describes it). Throws <see cref="ModInstallException"/> when that place is not certain.
+    /// </summary>
+    ModInstallRecord InstallAt(ModPlan plan, ModPlanItem item, string place, string gameFolder, string game);
 }
 
 public static class ModEngineContract
 {
-    public const int ApiVersion = 2;
+    public const int ApiVersion = 4;
+}
+
+/// <summary>What a listed item is, for the app.</summary>
+public enum ModPlanKind
+{
+    /// <summary>An OpenIV package (installed by the app's own package installer).</summary>
+    Package,
+    /// <summary>A Modexa package (.mxa).</summary>
+    Licensed,
+    /// <summary>A mod the engine installs.</summary>
+    Mod,
+    /// <summary>Files whose place the user gives by hand.</summary>
+    Manual,
+    /// <summary>Shown only (with the reason in <see cref="ModPlanItem.Detail"/>).</summary>
+    Refused
+}
+
+/// <summary>One item found in what the user gave.</summary>
+public sealed class ModPlanItem
+{
+    public ModPlanKind Kind { get; init; }
+    public string Title { get; init; } = "";
+    /// <summary>Short label shown next to the title.</summary>
+    public string? Badge { get; init; }
+    /// <summary>One line about it (what goes where, or why it is refused).</summary>
+    public string? Detail { get; init; }
+    /// <summary>Where it sits in what the user gave ("…\Optional Add-Ons\4. Parallax Roads").</summary>
+    public string? Location { get; init; }
+    /// <summary>Package / .mxa file, for the app to install.</summary>
+    public string? Path { get; init; }
+    /// <summary>Installing it needs the editable mods\update\update.rpf (made first, with progress).</summary>
+    public bool NeedsModsArchive { get; init; }
+    /// <summary>The engine's own data about the item.</summary>
+    public object? Tag { get; init; }
+}
+
+/// <summary>Everything found in what the user gave.</summary>
+public sealed class ModPlan
+{
+    public List<ModPlanItem> Items { get; init; } = new();
 }
 
 public enum EngineStage { Unpacking, Installing }

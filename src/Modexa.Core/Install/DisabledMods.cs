@@ -21,6 +21,8 @@ public sealed class DisabledMod
     public string? GameTitle { get; set; }
     public string GameFolder { get; set; } = "";
     public string? ProductId { get; set; }
+    /// <summary>A prepare step (Mod Runner, GameConfig, Menu…): enabling runs the step again (with <see cref="Version"/> as its choice).</summary>
+    public Prepare.PrepareStep? Setup { get; set; }
     /// <summary>File name it was installed from (kept on the reinstall, so split mods stay apart).</summary>
     public string? Source { get; set; }
     public string? Version { get; set; }
@@ -82,6 +84,12 @@ public static class DisabledModsStore
         try { string dir = DirFor(id); if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
     }
 
+    /// <summary>A prepare step installed again: its disabled entry is no longer needed.</summary>
+    public static void RemoveSetup(string gameFolder, Prepare.PrepareStep step)
+    {
+        foreach (var d in ForFolder(gameFolder).Where(d => d.Setup == step)) Remove(d.Id);
+    }
+
     /// <summary>A mod installed again from the same file replaces its disabled entry.</summary>
     public static void RemoveSameSource(string gameFolder, string? source)
     {
@@ -93,9 +101,9 @@ public static class DisabledModsStore
     /// <summary>Other disabled parts of the same split mod (same name and author, same game folder).</summary>
     public static List<DisabledMod> PartsOf(DisabledMod mod)
         => ForFolder(mod.GameFolder)
-            .Where(d => d.ModType == MxaModType.Oiv && mod.ModType == MxaModType.Oiv && d.ProductId == null
-                        && string.Equals(d.Name, mod.Name, StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(d.Author ?? "", mod.Author ?? "", StringComparison.OrdinalIgnoreCase))
+            .Where(d => d.Id == mod.Id
+                        || (d.ModType == MxaModType.Oiv && mod.ModType == MxaModType.Oiv && d.ProductId == null && mod.ProductId == null
+                            && ModParts.SameMod(mod.Name, mod.Author, mod.Source, d.Name, d.Author, d.Source)))
             .ToList();
 
     /// <summary>

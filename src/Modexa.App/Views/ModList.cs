@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -21,8 +21,8 @@ public sealed class ModItem
     public string GameFolder => Record?.GameFolder ?? Disabled!.GameFolder;
     public DateTime InstalledUtc => Record?.InstalledUtc ?? Disabled!.InstalledUtc;
     public bool IsSetup => Record?.Setup != null;
-    /// <summary>Can be turned off for a while (a mod in the game; prepare steps have their own buttons).</summary>
-    public bool CanDisable => Record != null && Record.Setup == null;
+    /// <summary>Can be turned off for a while (any mod in the game, prepare steps too).</summary>
+    public bool CanDisable => Record != null;
 
     /// <summary>Everything in one game folder, newest first (a disabled mod keeps its place).</summary>
     public static List<ModItem> ForFolder(string gameFolder)
@@ -240,25 +240,25 @@ public static class ModRow
             Opacity = off ? 0.6 : 1
         };
         title.Children.Add(name);
-        title.Children.Add(Chip(owner, record?.Setup != null ? null : kindLabel, record?.Setup != null ? "Mods_Kind_Setup" : null, "Accent"));
+        bool setup = record?.Setup != null || disabled?.Setup != null;
+        title.Children.Add(Chip(owner, setup ? null : kindLabel, setup ? "Mods_Kind_Setup" : null, "Accent"));
         if (off) title.Children.Add(Chip(owner, null, "Mods_Disabled_Chip", "Warning"));
         info.Children.Add(title);
 
         var parts = new List<string>();
         string? version = record != null ? record.Version : disabled!.Version;
-        if (!string.IsNullOrWhiteSpace(version)) parts.Add(record?.Setup == null ? "v" + version : version!);
+        if (!string.IsNullOrWhiteSpace(version)) parts.Add(setup ? version! : "v" + version);
         string? author = record != null ? record.Author : disabled!.Author;
         if (!string.IsNullOrWhiteSpace(author)) parts.Add(author!);
         parts.Add(item.InstalledUtc.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        // Short on purpose: the name is the title already (no file name repeated under it).
         if (record != null) parts.Add(Loc.Instance.Format("Mods_Changes", record.Files.Count + record.ArchiveEdits.Count));
         else parts.Add(Loc.Instance["Mods_Disabled_Meta"]);
-        string? source = record != null ? record.Source : disabled!.Source;
-        if (!string.IsNullOrWhiteSpace(source)) parts.Add(source!);
         var meta = new TextBlock
         {
             // Each part ends with a left-to-right mark, so a Persian part ("2 تغییر") never pulls the
             // numbers of the next one ("206.oiv") into right-to-left order.
-            Text = string.Join("‎  ·  ", parts) + "‎",
+            Text = string.Join("\u200E · ", parts) + "\u200E",
             Style = (Style)owner.FindResource("Text.Desc"),
             Margin = new Thickness(0, 3, 0, 0),
             TextTrimming = TextTrimming.CharacterEllipsis,

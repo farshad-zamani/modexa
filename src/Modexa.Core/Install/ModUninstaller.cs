@@ -11,6 +11,8 @@ public sealed class UninstallResult
     public List<string> Errors { get; } = new();
     /// <summary>Disk space given back (archive copies deleted, archives compacted).</summary>
     public long FreedBytes { get; set; }
+    /// <summary>Files the mod wrote that something else changed since: left in place (game-relative).</summary>
+    public List<string> Kept { get; } = new();
     public bool Success => Errors.Count == 0;
 }
 
@@ -64,11 +66,21 @@ public static class ModUninstaller
         var released = record.Archives.Where(a => ModsArchives.CanRelease(folder, a, others))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        // An archive the mod itself put on disk (e.g. its own dlcpacks\…\dlc.rpf) and then edited is
+        // deleted as a whole below: undoing the edits inside it first would only make it look
+        // "changed by something else" and leave it behind.
+        foreach (var f in record.Files.Where(f => f.WasCreated && !f.Reverted && f.Dest.EndsWith(".rpf", StringComparison.OrdinalIgnoreCase)))
+        {
+            if (!FileStamp.Matches(f.WrittenStamp, Path.Combine(folder, f.Dest))) continue;
+            foreach (var e in record.ArchiveEdits.Where(e => !e.Reverted && SameDiskFile(e.Archive, f.Dest)))
+                e.Reverted = true;
+        }
+
         // 1) Edits inside game archives (newest first).
         ArchiveEditRecorder.Revert(record, later, result.Errors, released, step);
 
         // 2) Files on disk (newest first).
-        LooseFileInstaller.RevertFiles(record, later, result.Errors);
+        LooseFileInstaller.RevertFiles(record, later, result.Errors, result.Kept);
 
         // 3) Add-on registration — unless another installed mod still uses the same pack name, or
         //    update.rpf itself is about to be deleted.
@@ -129,6 +141,11 @@ public static class ModUninstaller
             InstalledModsStore.Update(new[] { record }); // keeps the progress for a retry
             Log.Info($"Uninstall of '{record.Name}' incomplete: {string.Join("; ", result.Errors)}");
         }
+        if (result.Kept.Count > 0) Log.Info($"Uninstall of '{record.Name}' left files changed since: {string.Join("; ", result.Kept)}");
         return result;
     }
+
+    /// <summary>Does an archive edit ("update/x64/dlcpacks/x/dlc.rpf") point at this disk file ("mods\update\…\dlc.rpf")?</summary>
+    internal static bool SameDiskFile(string archive, string dest)
+        => string.Equals(ModsArchives.ModsRelative(archive).TrimStart('\\'), dest.Replace('/', '\\').TrimStart('\\'), StringComparison.OrdinalIgnoreCase);
 }

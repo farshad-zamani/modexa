@@ -60,11 +60,16 @@ public static class ModBackups
 
 /// <summary>
 /// Fingerprint of a file on disk — tells whether a file is still the one a mod wrote. Content hash
-/// for normal files; for big ones (multi-GB archives) size + last write time, which a copy preserves.
+/// for normal files; for big ones (multi-GB archives) the size plus a hash of their first and last
+/// megabytes — where every archive edit lands (the table of contents is at the start, new data is
+/// appended at the end). The file's time stamp is NOT used: other programs (OpenIV browsing in edit
+/// mode, sync / backup tools) can touch it without changing a byte, which used to make an unchanged
+/// add-on look "changed by something else" and stay behind on uninstall.
 /// </summary>
 public static class FileStamp
 {
     private const long HashLimit = 32L * 1024 * 1024;
+    private const int SampleBytes = 1 << 20;
 
     public static string? Of(string path)
     {
@@ -72,11 +77,36 @@ public static class FileStamp
         {
             var fi = new FileInfo(path);
             if (!fi.Exists) return null;
-            if (fi.Length > HashLimit) return $"{fi.Length}:t{fi.LastWriteTimeUtc.Ticks}";
             using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            return $"{fi.Length}:{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(fs))}";
+            if (fi.Length <= HashLimit)
+                return $"{fi.Length}:{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(fs))}";
+
+            using var sha = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+            var buf = new byte[SampleBytes];
+            fs.ReadExactly(buf);
+            sha.AppendData(buf);
+            fs.Position = fi.Length - SampleBytes;
+            fs.ReadExactly(buf);
+            sha.AppendData(buf);
+            return $"{fi.Length}:q{Convert.ToHexString(sha.GetHashAndReset())}";
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// True when the file is still the one <paramref name="stamp"/> was taken of. A stamp from an older
+    /// version (size + time, "len:tTICKS") is judged by the size only, since times can change alone.
+    /// </summary>
+    public static bool Matches(string? stamp, string path)
+    {
+        if (stamp == null) return false;
+        string? current = Of(path);
+        if (current == null) return false;
+        if (current == stamp) return true;
+        int colon = stamp.IndexOf(':');
+        if (colon > 0 && stamp.Length > colon + 1 && stamp[colon + 1] == 't')
+            return current.StartsWith(stamp[..(colon + 1)], StringComparison.Ordinal);
+        return false;
     }
 }
 

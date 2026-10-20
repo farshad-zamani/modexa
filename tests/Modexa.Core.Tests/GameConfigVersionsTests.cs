@@ -58,6 +58,18 @@ public class GameConfigVersionsTests
         var pick = GameConfigVersions.Pick(Files, Spec, 4100)!;
         Assert.Equal(Root + "Gta Config v37 for v 1.0.3889", pick.Folder);
         Assert.False(pick.Matches);
+        Assert.False(pick.TooOld);
+    }
+
+    [Theory]
+    [InlineData(1604)] // older than every config in the pack
+    [InlineData(2189)] // between two configs, none made for it
+    public void An_old_build_without_a_config_must_update_the_game(int build)
+    {
+        var pick = GameConfigVersions.Pick(Files, Spec, build)!;
+        Assert.True(pick.TooOld);
+        Assert.False(pick.Matches);
+        Assert.Equal("3889", pick.Newest);
     }
 
     [Fact]
