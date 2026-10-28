@@ -207,7 +207,8 @@ public static class ModActions
 
         if (errors.Count > 0)
             return new ModResult(false, Loc.Instance.Format("Mods_UninstallIncomplete", string.Join("\n", errors.Take(6).Select(e => "• " + e))));
-        return new ModResult(true, string.Join("\n", done));
+        return new ModResult(true, done.Count <= 2 ? string.Join("\n", done)
+            : Loc.Instance.Format("Mods_DisabledCount", done.Count) + "\n" + string.Join("\n", plan.Select(p => "• " + ModInstallService.DisplayName(p.Record))));
     }
 
     // ---- enable ------------------------------------------------------------------------------------
@@ -271,9 +272,8 @@ public static class ModActions
             }
         }
 
-        var shown = results.Where(r => !r.Cancelled).ToList();
-        if (shown.Count == 0) return results.Count > 0 ? new ModResult(false, "", Cancelled: true) : new ModResult(true, "");
-        return new ModResult(shown.All(r => r.Success), string.Join("\n\n", shown.Select(r => r.Message)));
+        if (results.Count == 0) return new ModResult(true, "");
+        return ModInstallService.Summarize(results);
     }
 
     /// <summary>A disabled prepare step: run again with the choice it had (e.g. the GameConfig traffic variant), no questions.</summary>

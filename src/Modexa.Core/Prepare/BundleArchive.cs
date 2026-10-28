@@ -12,6 +12,25 @@ public static class BundleArchive
 
     public static string Normalize(string key) => key.Replace('\\', '/').TrimStart('/');
 
+    /// <summary>
+    /// True when the archive is protected by a password (its entries, or its whole table of contents,
+    /// are encrypted).
+    /// </summary>
+    public static bool IsEncrypted(string archivePath)
+    {
+        try
+        {
+            using var archive = ArchiveFactory.OpenArchive(archivePath, new ReaderOptions());
+            return archive.Entries.Any(e => e.IsEncrypted);
+        }
+        catch (Exception ex)
+        {
+            // An encrypted table of contents can't even be listed without the password.
+            string m = (ex.GetType().Name + " " + ex.Message).ToLowerInvariant();
+            return m.Contains("password") || m.Contains("encrypt") || m.Contains("crypt");
+        }
+    }
+
     /// <summary>All file paths in the archive (headers only, no decompression).</summary>
     public static List<string> ListFiles(string archivePath, string? password = null)
     {

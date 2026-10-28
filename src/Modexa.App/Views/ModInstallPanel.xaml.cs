@@ -187,11 +187,12 @@ public partial class ModInstallPanel : UserControl, IModListHost
     private void Choose_Click(object sender, RoutedEventArgs e)
     {
         bool pro = ThemeService.CurrentTier == LicenseTier.Pro;
+        string loose = string.Join(";", ModInstallService.LooseExtensions.Select(x => "*" + x));
         string filter = !GtaV
             ? $"{Loc.Instance["Mods_Filter_Mxa"]} (*.mxa)|*.mxa"
             : pro
-                ? $"{Loc.Instance["Mods_Filter_All"]} (*.oiv;*.oivs;*.mxa;*.zip;*.rar;*.7z;*.rpf)|*.oiv;*.oivs;*.mxa;*.zip;*.rar;*.7z;*.rpf|OpenIV (*.oiv;*.oivs)|*.oiv;*.oivs|Modexa (*.mxa)|*.mxa"
-                : $"{Loc.Instance["Mods_Filter_All"]} (*.oiv;*.oivs;*.mxa)|*.oiv;*.oivs;*.mxa|OpenIV (*.oiv;*.oivs)|*.oiv;*.oivs|Modexa (*.mxa)|*.mxa";
+                ? $"{Loc.Instance["Mods_Filter_All"]}|*.oiv;*.oivs;*.mxa;*.zip;*.rar;*.7z;*.rpf;{loose}|OpenIV (*.oiv;*.oivs)|*.oiv;*.oivs|Modexa (*.mxa)|*.mxa|{Loc.Instance["Mods_Filter_GameFiles"]}|{loose}"
+                :$"{Loc.Instance["Mods_Filter_All"]} (*.oiv;*.oivs;*.mxa)|*.oiv;*.oivs;*.mxa|OpenIV (*.oiv;*.oivs)|*.oiv;*.oivs|Modexa (*.mxa)|*.mxa";
         // Several files at once: a mod split into parts is installed part 1, part 2, … in one go.
         using var dlg = new WinForms.OpenFileDialog { Filter = filter, Title = Loc.Instance["Mods_ChooseFile"], Multiselect = true };
         if (dlg.ShowDialog() == WinForms.DialogResult.OK)
@@ -231,10 +232,10 @@ public partial class ModInstallPanel : UserControl, IModListHost
             var results = await ModInstallService.InstallManyAsync(files, _target, Window.GetWindow(this)!, BusyProgress());
             _busy = false;
             Host?.HideBusy();
-            var shown = results.Where(r => !r.Cancelled).ToList();
-            if (shown.Count > 0)
-                DialogWindow.Show(string.Join("\n\n", shown.Select(r => r.Message)),
-                    shown.All(r => r.Success) ? DialogKind.Success : DialogKind.Warning);
+            // One short summary, however many mods were installed.
+            var summary = ModInstallService.Summarize(results);
+            if (!summary.Cancelled && summary.Message.Length > 0)
+                DialogWindow.Show(summary.Message, summary.Success ? DialogKind.Success : DialogKind.Warning);
         }
         catch (Exception ex)
         {
@@ -258,10 +259,7 @@ public partial class ModInstallPanel : UserControl, IModListHost
         if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return new List<string>();
         var files = (string[])e.Data.GetData(DataFormats.FileDrop);
         // Extension check (plus a cheap "is it a folder" for GTA V: a folder of mods is read like an archive).
-        return files.Where(f => f.EndsWith(MxaFile.Extension, StringComparison.OrdinalIgnoreCase)
-                                || (GtaV && (ModInstallService.OivExtensions.Concat(ModInstallService.RawExtensions)
-                                    .Any(x => f.EndsWith(x, StringComparison.OrdinalIgnoreCase)) || Directory.Exists(f))))
-            .ToList();
+        return files.Where(f => ModInstallService.IsInstallable(f, GtaV)).ToList();
     }
 
     private void Root_DragOver(object sender, DragEventArgs e)

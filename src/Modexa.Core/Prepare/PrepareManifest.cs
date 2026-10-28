@@ -77,6 +77,12 @@ public sealed class BundleEntry
     /// <summary>File mappings. Empty = extract the whole archive into the game root (v1 behaviour).</summary>
     [JsonPropertyName("maps")] public List<BundleMap> Maps { get; set; } = new();
 
+    /// <summary>
+    /// Maps used to UPDATE an installed step (e.g. only the trainer's .asi, so the user's saves and
+    /// settings in its folder are kept). Empty = an update installs every map again.
+    /// </summary>
+    [JsonPropertyName("updateMaps")] public List<BundleMap> UpdateMaps { get; set; } = new();
+
     /// <summary>Folders to create in the game root (e.g. "mods").</summary>
     [JsonPropertyName("createDirs")] public List<string> CreateDirs { get; set; } = new();
 
@@ -220,7 +226,9 @@ public sealed class PrepareManifest
                         {
                             new BundleMap { From = "Menyoo 2.4.3/Menyoo.asi", To = "Menyoo.asi" },
                             new BundleMap { From = "Menyoo 2.4.3/menyooStuff/", To = "menyooStuff" }
-                        }
+                        },
+                        // An update replaces the trainer only: the user's saves in menyooStuff stay.
+                        UpdateMaps = { new BundleMap { From = "Menyoo */Menyoo.asi", To = "Menyoo.asi" } }
                     }
                 }
             },
@@ -238,7 +246,8 @@ public sealed class PrepareManifest
                         {
                             new BundleMap { From = "Addon Spawner */AddonSpawner.asi", To = "AddonSpawner.asi" },
                             new BundleMap { From = "Addon Spawner */AddonSpawner/", To = "AddonSpawner" }
-                        }
+                        },
+                        UpdateMaps = { new BundleMap { From = "Addon Spawner */AddonSpawner.asi", To = "AddonSpawner.asi" } }
                     }
                 }
             },

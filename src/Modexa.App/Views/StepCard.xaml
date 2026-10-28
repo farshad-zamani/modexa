@@ -31,6 +31,15 @@
                                        Foreground="{DynamicResource Accent}"/>
                         </StackPanel>
                     </Border>
+                    <!-- "Update available", "Game updated", or "Found (not by Modexa)". -->
+                    <Border x:Name="StateChip" Style="{StaticResource TierChip}" MinHeight="22" Padding="8,0"
+                            Margin="8,0,0,0" VerticalAlignment="Center" Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="StateIcon" Style="{StaticResource Icon}" FontSize="10"/>
+                            <TextBlock x:Name="StateText" Margin="6,0,0,0" FontFamily="{DynamicResource Font.Hud}"
+                                       FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
                 <TextBlock Style="{StaticResource Text.Desc}" Margin="0,4,0,0"
                            Text="{Binding Description, ElementName=Root}"/>

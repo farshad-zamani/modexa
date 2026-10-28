@@ -54,6 +54,8 @@ ShowLanguageDialog=auto
 #if FileExists("..\..\src\Modexa.App\assets\icon\modexa.ico")
 SetupIconFile=..\..\src\Modexa.App\assets\icon\modexa.ico
 #endif
+; The logo in the wizard's header, one image per display scale.
+WizardSmallImageFile=images\wizard-small-55.bmp,images\wizard-small-64.bmp,images\wizard-small-69.bmp,images\wizard-small-83.bmp,images\wizard-small-92.bmp,images\wizard-small-110.bmp,images\wizard-small-119.bmp,images\wizard-small-138.bmp
 
 [Languages]
 Name: "en"; MessagesFile: "compiler:Default.isl"

@@ -95,7 +95,8 @@ public sealed class PrepareService
         string? versionToken = null,
         IProgress<PrepareProgress>? progress = null,
         CancellationToken ct = default,
-        Func<IReadOnlyList<string>, string?, Task<string?>>? chooseVariant = null)
+        Func<IReadOnlyList<string>, string?, Task<string?>>? chooseVariant = null,
+        bool update = false)
     {
         if (string.IsNullOrWhiteSpace(gameFolder) || !Directory.Exists(gameFolder))
             throw new DirectoryNotFoundException(gameFolder);
@@ -117,7 +118,11 @@ public sealed class PrepareService
         // 2) Verify the pack has what we expect, resolve version folders, find gameconfig variants.
         progress?.Report(new PrepareProgress(PreparePhase.Verifying, null));
         var files = await Task.Run(() => BundleArchive.ListFiles(archive, bundle.Password), ct);
-        var (maps, versionWarning) = ResolveMaps(bundle, files, versionToken);
+        // An update of an installed step may replace only part of it (e.g. the trainer, not its saves).
+        var mapSource = update && bundle.UpdateMaps.Count > 0
+            ? new BundleEntry { Maps = bundle.UpdateMaps, RequireVersionMatch = bundle.RequireVersionMatch }
+            : bundle;
+        var (maps, versionWarning) = ResolveMaps(mapSource, files, versionToken);
         foreach (var map in maps)
             if (!files.Any(f => Matches(map, f)))
                 throw new PrepareLayoutException(map.From);
@@ -208,6 +213,11 @@ public sealed class PrepareService
                          InstalledUtc = DateTime.UtcNow
                      };
         record.Source = Path.GetFileName(archive);
+        // What it is installed for: an update is offered when the game build or the pack changes.
+        record.PreparedForBuild = build;
+        record.PackHash = await Task.Run(() => FileHash(archive), ct);
+        record.LastUpdateCheckUtc = DateTime.UtcNow;
+        if (configName != null && variant != null) record.ConfigName = configName;
         if (modsRpfCreated && !record.CreatedArchives.Contains(ModsArchives.UpdateRpf, StringComparer.OrdinalIgnoreCase))
             record.CreatedArchives.Add(ModsArchives.UpdateRpf);
 
@@ -277,6 +287,32 @@ public sealed class PrepareService
             if (r.Setup is { } s && (s != PrepareStep.GameConfig || r.ArchiveEdits.Any(e => !e.Reverted)))
                 map[s] = r;
         return map;
+    }
+
+    /// <summary>
+    /// GTA V prepare steps that look already done WITHOUT Modexa (their files are in the game folder,
+    /// e.g. the user prepared the game with OpenIV before): shown as "found, not by Modexa". Whether
+    /// such files are right (a gameconfig for this build…) can't be told, so they are never counted
+    /// as installed.
+    /// </summary>
+    public static HashSet<PrepareStep> ForeignSteps(string gameFolder, GameEdition edition)
+    {
+        var found = new HashSet<PrepareStep>();
+        var mine = InstalledSteps(gameFolder);
+        bool Has(params string[] names) => names.Any(n => File.Exists(Path.Combine(gameFolder, n)));
+
+        if (!mine.ContainsKey(PrepareStep.ModRunner) && Has("ScriptHookV.dll", "ScriptHookVDotNet.asi", "dinput8.dll", "ScriptHookV.asi"))
+            found.Add(PrepareStep.ModRunner);
+        if (!mine.ContainsKey(PrepareStep.GameConfig))
+        {
+            bool adjusters = edition == GameEdition.Legacy && Has("GTAV.HeapAdjuster.asi", "PackfileLimitAdjuster.asi", "GTAV.PackfileLimitAdjuster.asi");
+            string modsRpf = Path.Combine("mods", "update", "update.rpf");
+            bool ownCopy = new BackupSession(gameFolder).Created(modsRpf);
+            if (adjusters || (Has(modsRpf) && !ownCopy)) found.Add(PrepareStep.GameConfig);
+        }
+        if (!mine.ContainsKey(PrepareStep.Menu) && Has("Menyoo.asi")) found.Add(PrepareStep.Menu);
+        if (!mine.ContainsKey(PrepareStep.AddonSpawner) && Has("AddonSpawner.asi")) found.Add(PrepareStep.AddonSpawner);
+        return found;
     }
 
     private static string StepName(GameId game, PrepareStep step) => step switch
@@ -463,6 +499,13 @@ public sealed class PrepareService
     public static void Revert(string gameFolder) => new BackupSession(gameFolder).RevertAll();
 
     public static bool HasBackups(string gameFolder) => new BackupSession(gameFolder).HasBackups;
+
+    /// <summary>SHA-256 (hex) of a file, streamed.</summary>
+    internal static string FileHash(string path)
+    {
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20, FileOptions.SequentialScan);
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(fs));
+    }
 }
 
 /// <summary>Downloads bundles once and reuses them while the server copy is unchanged.</summary>
@@ -477,6 +520,18 @@ public static class BundleCache
     }
 
     private static string Dir => Path.Combine(AppPaths.CacheDir, "bundles");
+
+    /// <summary>The pack downloaded earlier for this bundle, if any (no network).</summary>
+    public static string? LocalFile(BundleEntry bundle)
+    {
+        try
+        {
+            string name = Path.GetFileName(Uri.UnescapeDataString(new Uri(bundle.Url!).AbsolutePath));
+            string file = Path.Combine(Dir, string.IsNullOrWhiteSpace(name) ? "bundle.zip" : name);
+            return File.Exists(file) ? file : null;
+        }
+        catch { return null; }
+    }
 
     /// <summary>
     /// The pack on disk: the earlier download when the server copy is unchanged (or the server can't

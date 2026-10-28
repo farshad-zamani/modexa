@@ -40,21 +40,23 @@ public interface IModEngine
 public interface IProModEngine : IModEngine
 {
     /// <summary>Lists what a mod the user gave holds (nothing is installed).</summary>
-    ModPlan Plan(string path, string workDir, IProgress<int>? progress = null);
+    /// <param name="askPassword">Asked for a protected archive's password (its file name → password, null = cancel).</param>
+    ModPlan Plan(string path, string workDir, IProgress<int>? progress = null, Func<string, string?>? askPassword = null);
 
     /// <summary>Installs one listed item of kind <see cref="ModPlanKind.Mod"/>.</summary>
     ModInstallRecord Install(ModPlan plan, ModPlanItem item, string gameFolder, string game);
 
     /// <summary>
-    /// Installs an item of kind <see cref="ModPlanKind.Manual"/> into the place the user gives (as the
-    /// mod's author describes it). Throws <see cref="ModInstallException"/> when that place is not certain.
+    /// Installs an item into the place the user gives (as the mod's author describes it): an item of
+    /// kind <see cref="ModPlanKind.Manual"/>, or a <see cref="ModPlanKind.Mod"/> the user places
+    /// elsewhere. Throws <see cref="ModInstallException"/> when that place is not certain.
     /// </summary>
     ModInstallRecord InstallAt(ModPlan plan, ModPlanItem item, string place, string gameFolder, string game);
 }
 
 public static class ModEngineContract
 {
-    public const int ApiVersion = 4;
+    public const int ApiVersion = 5;
 }
 
 /// <summary>What a listed item is, for the app.</summary>
@@ -85,11 +87,18 @@ public sealed class ModPlanItem
     public string? Location { get; init; }
     /// <summary>Package / .mxa file, for the app to install.</summary>
     public string? Path { get; init; }
+    /// <summary>What goes where ("AddonSpawner.asi" → "game folder"), one line each.</summary>
+    public IReadOnlyList<ModPlanTarget> Targets { get; init; } = Array.Empty<ModPlanTarget>();
+    /// <summary>The user may give another place for it (a small edit button).</summary>
+    public bool CanPlace { get; init; }
     /// <summary>Installing it needs the editable mods\update\update.rpf (made first, with progress).</summary>
     public bool NeedsModsArchive { get; init; }
     /// <summary>The engine's own data about the item.</summary>
     public object? Tag { get; init; }
 }
+
+/// <summary>One line of a listed item: a file or folder, and where it goes.</summary>
+public sealed record ModPlanTarget(string Name, string Destination);
 
 /// <summary>Everything found in what the user gave.</summary>
 public sealed class ModPlan

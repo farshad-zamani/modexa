@@ -68,11 +68,32 @@ public sealed class ModInstallRecord
     /// <summary>Operations the installer skipped (shown to the user once after installing).</summary>
     public List<string> Warnings { get; set; } = new();
 
-    /// <summary>Short type label: Setup / Modexa (licensed package) / OIV / Add-on / Files.</summary>
+    // ---- prepare steps: what they were installed for (to tell when an update is due) ----
+
+    /// <summary>Prepare step: the game build it was installed for.</summary>
+    public int PreparedForBuild { get; set; }
+    /// <summary>Prepare step: SHA-256 of the pack it was installed from.</summary>
+    public string? PackHash { get; set; }
+    /// <summary>GameConfig step: the config of the pack that was chosen ("Gta Config v34 for v 1.0.3407").</summary>
+    public string? ConfigName { get; set; }
+    /// <summary>Prepare step: when its pack was last checked for a newer version.</summary>
+    public DateTime? LastUpdateCheckUtc { get; set; }
+
+    /// <summary>Short type label: Setup / Modexa / OIV / Add-on / Script / ASI / Manual / Files.</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public string KindLabel => Setup != null ? "Setup"
         : ProductId != null || Source?.EndsWith(".mxa", StringComparison.OrdinalIgnoreCase) == true ? "Modexa"
-        : ModType switch { MxaModType.Oiv => "OIV", MxaModType.Addon => "Add-on", _ => "Files" };
+        : ModType switch
+        {
+            MxaModType.Oiv => "OIV",
+            MxaModType.Addon => "Add-on",
+            // Loose files: named after what they are.
+            _ when ArchiveEdits.Count > 0 => "Manual",
+            _ when Files.Any(f => f.Dest.StartsWith("scripts\\", StringComparison.OrdinalIgnoreCase)) => "Script",
+            _ when Files.Any(f => f.Dest.EndsWith(".asi", StringComparison.OrdinalIgnoreCase)) => "ASI",
+            _ when Files.Any(f => f.Dest.StartsWith("plugins\\", StringComparison.OrdinalIgnoreCase)) => "Plugin",
+            _ => "Files"
+        };
 
     /// <summary>All archives the mod touched (edited or copied).</summary>
     [System.Text.Json.Serialization.JsonIgnore]

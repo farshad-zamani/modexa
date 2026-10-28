@@ -7,7 +7,7 @@
     <AssemblyName>Modexa</AssemblyName>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
-    <!-- The turquoise "M" tile from the title bar (assets\icon\modexa.ico, 16-256 px). -->
+    <!-- The Modexa logo (the neon "MX" tile; assets\icon\modexa.ico, 16-256 px). -->
     <ApplicationIcon>assets\icon\modexa.ico</ApplicationIcon>
 
     <!-- Hardened single-file release knobs (mirrors the Backup Manager). -->
@@ -37,6 +37,7 @@
          game, from each game's Steam store assets), embedded as WPF resources (pack://). -->
     <Resource Include="assets\fonts\*.ttf" />
     <Resource Include="assets\icon\modexa.ico" />
+    <Resource Include="assets\icon\modexa-logo.png" />
     <Resource Include="assets\promo\*.jpg" />
     <Resource Include="assets\games\*.jpg" />
     <Resource Include="assets\games\*.png" />

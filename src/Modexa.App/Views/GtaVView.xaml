@@ -119,6 +119,16 @@
                            Text="{Binding [GtaV_Prepare_Title], Source={x:Static i18n:Loc.Instance}}"/>
                 <TextBlock Style="{StaticResource Text.Desc}" Margin="0,4,0,14"
                            Text="{Binding [GtaV_Prepare_Desc], Source={x:Static i18n:Loc.Instance}}"/>
+                <!-- The game looks prepared already, but not with Modexa. -->
+                <Border x:Name="ForeignNote" Style="{StaticResource Card}" Padding="16,12" Margin="0,0,0,12" Visibility="Collapsed"
+                        BorderBrush="{DynamicResource Warning}">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Icon}" FontSize="15" Text="&#xE7BA;" VerticalAlignment="Top" Margin="0,2,12,0"
+                                   Foreground="{DynamicResource Warning}"/>
+                        <TextBlock Style="{StaticResource Text.Desc}" TextWrapping="Wrap" MaxWidth="820"
+                                   Text="{Binding [Prep_Foreign_Note], Source={x:Static i18n:Loc.Instance}}"/>
+                    </StackPanel>
+                </Border>
 
                 <!-- One click: Mod Runner + GameConfig (normal traffic), no questions. -->
                 <Border Style="{StaticResource Card}" Padding="20,18" Margin="0,0,0,12" BorderBrush="{DynamicResource Stroke.Accent}">

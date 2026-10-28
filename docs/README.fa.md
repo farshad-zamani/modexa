@@ -1,5 +1,7 @@
 <div align="center" dir="rtl">
 
+<img src="brand/modexa-logo-192.png" width="96" height="96" alt="لوگوی مادکسا">
+
 # مادکسا (MODEXA)
 
 **نصب‌کننده و آماده‌ساز یونیورسال ماد برای بازی‌های راکستار و بیشتر**

@@ -297,7 +297,9 @@ public partial class GtaVView : UserControl, IInstallHost
         }
     }
 
-    private Task StepClickAsync(StepCard card, PrepareStep step) => card.IsDone ? RemoveStepAsync(step) : RunStepAsync(step);
+    // Update when a newer version is due; else remove an installed step, or install it.
+    private Task StepClickAsync(StepCard card, PrepareStep step)
+        => card.IsUpdate ? RunStepAsync(step, update: true) : card.IsDone ? RemoveStepAsync(step) : RunStepAsync(step);
 
     /// <summary>Removes an installed prepare step exactly like any installed mod.</summary>
     private async Task RemoveStepAsync(PrepareStep step)
@@ -331,7 +333,7 @@ public partial class GtaVView : UserControl, IInstallHost
         }
     }
 
-    private async Task RunStepAsync(PrepareStep step)
+    private async Task RunStepAsync(PrepareStep step, bool update = false)
     {
         if (_install == null)
         {
@@ -352,9 +354,15 @@ public partial class GtaVView : UserControl, IInstallHost
         {
             var svc = new PrepareService(_manifest);
             int build = _install.Version?.Build ?? 0;
+            // An update keeps what was chosen before (e.g. the traffic): no questions.
+            string? installedVariant = update ? PrepareService.InstalledSteps(folder).GetValueOrDefault(step)?.Version : null;
             var result = await svc.RunAsync(GameCatalog.ForEdition(_edition), step, _install.Folder, _install.Edition, build,
                 versionToken: null, progress, _cts.Token,
-                (variants, def) => Task.FromResult(ChooseGameConfig(variants, def)));
+                update
+                    ? (variants, def) => Task.FromResult<string?>(installedVariant != null && variants.Contains(installedVariant) ? installedVariant
+                        : variants.FirstOrDefault(GameConfigLabels.IsStock) ?? def)
+                    : (variants, def) => Task.FromResult(ChooseGameConfig(variants, def)),
+                update: update);
 
             Busy.Hide();
             ShowResult(step, result, build);
@@ -476,6 +484,51 @@ public partial class GtaVView : UserControl, IInstallHost
         ModsRpfText.Bind(TextBlock.TextProperty, ready ? "Prep_ModsRpf_Ready"
             : rpf == GameConfigOutcome.UpdateRpfEncrypted ? "Prep_ModsRpf_Encrypted" : "Prep_ModsRpf_Missing");
         ModsRpfChip.ToolTip = Loc.Instance["Prep_ModsRpf_Tip"];
+
+        // Prepared before Modexa (e.g. with OpenIV): shown, never counted as installed — can't tell right from wrong.
+        var edition = _install.Edition;
+        var foreign = await Task.Run(() => PrepareService.ForeignSteps(folder, edition));
+        StepModRunner.SetForeign(foreign.Contains(PrepareStep.ModRunner));
+        StepGameConfig.SetForeign(foreign.Contains(PrepareStep.GameConfig));
+        StepMenu.SetForeign(foreign.Contains(PrepareStep.Menu));
+        StepSpawner.SetForeign(foreign.Contains(PrepareStep.AddonSpawner));
+        ForeignNote.Visibility = foreign.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        _ = CheckUpdatesAsync(folder, state);
+    }
+
+    private bool _checkingUpdates;
+
+    /// <summary>
+    /// In the background: does an installed step need an update (the game was updated, or its pack has
+    /// a newer version)? The step's button then becomes "Update".
+    /// </summary>
+    private async Task CheckUpdatesAsync(string folder, Dictionary<PrepareStep, ModInstallRecord> state)
+    {
+        if (_checkingUpdates || _install == null) return;
+        _checkingUpdates = true;
+        try
+        {
+            var game = GameCatalog.ForEdition(_edition);
+            var edition = _install.Edition;
+            int build = _install.Version?.Build ?? 0;
+            var cards = new Dictionary<PrepareStep, StepCard>
+            {
+                [PrepareStep.ModRunner] = StepModRunner, [PrepareStep.GameConfig] = StepGameConfig,
+                [PrepareStep.Menu] = StepMenu, [PrepareStep.AddonSpawner] = StepSpawner
+            };
+            foreach (var (step, record) in state)
+            {
+                if (!cards.TryGetValue(step, out var card)) continue;
+                StepUpdateState s;
+                try { s = await Task.Run(() => PrepareUpdates.CheckAsync(_manifest, game, edition, build, record)); }
+                catch (Exception ex) { Modexa.Core.Diagnostics.Log.Info($"Update check {step}: {ex.Message}"); continue; }
+                if (!ReferenceEquals(folder, _install?.Folder) && folder != _install?.Folder) return;
+                if (s == StepUpdateState.Available) card.SetUpdate(true);
+                else if (s == StepUpdateState.GameUpdatedNoPack) card.SetGameUpdated();
+            }
+        }
+        finally { _checkingUpdates = false; }
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e) => _cts?.Cancel();

@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/brand/modexa-logo-192.png" width="96" height="96" alt="Modexa logo">
+
 # MODEXA
 
 **Universal mod installer and game preparer for Rockstar games and more**

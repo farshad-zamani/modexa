@@ -39,18 +39,10 @@
 
                 <!-- Brand -->
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
-                    <!-- The Modexa logo: always the turquoise tile (same as the app icon), whatever the theme. -->
-                    <Border Width="26" Height="26" CornerRadius="7">
-                        <Border.Background>
-                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                <GradientStop Color="#FF48E0F0" Offset="0"/>
-                                <GradientStop Color="#FF1C8FA3" Offset="1"/>
-                            </LinearGradientBrush>
-                        </Border.Background>
-                        <TextBlock Text="M" FontFamily="{DynamicResource Font.En.Display}" FontWeight="Bold"
-                                   FontSize="15" Foreground="#FF04171B"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
+                    <!-- The Modexa logo (same as the app icon), whatever the theme. -->
+                    <Image Source="pack://application:,,,/Modexa;component/assets/icon/modexa-logo.png"
+                           Width="28" Height="28" RenderOptions.BitmapScalingMode="HighQuality"
+                           SnapsToDevicePixels="True" VerticalAlignment="Center"/>
                     <TextBlock Text="MODEXA" FontFamily="{DynamicResource Font.En.Display}" FontWeight="Bold"
                                FontSize="15" Margin="10,0,0,0" VerticalAlignment="Center"
                                Foreground="{DynamicResource Text.Primary}"/>
