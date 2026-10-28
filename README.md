@@ -44,6 +44,11 @@ downloaded once and only again when it changes on the server:
 
 Once a step is installed its button turns into **Remove mod**, and it also appears in the game's **Installed** list (and in My Mods); the originals it replaced are restored exactly. After installing the GameConfig, Modexa tells you which config of the pack was chosen for your build (e.g. *Gta Config v34 for v 1.0.3407*). If your game build is older than every GameConfig in the pack, nothing is installed and Modexa asks you to update the game first (e.g. from [gameever.ir](https://gameever.ir)) — a config made for another build would stop the game from starting. **Revert** removes everything Modexa did in one go.
 
+After a game update, Modexa checks whether the Mod Runner pack has a newer version and whether the pack holds a
+GameConfig for the new build; if so, the step's button becomes **Update** (a GameConfig is only ever updated when the
+game build changed). Menyoo and the Addon Spawner are checked every 30 days, and updating them keeps your saves.
+Steps that are already in the game folder but were installed by another tool are marked *Found — not by Modexa*.
+
 ### Editable `update.rpf`, created automatically
 `gameconfig.xml`, add-on mods and most OIV packages need an editable copy of the game's
 `update\update.rpf` in the `mods` folder. Modexa makes it itself, exactly like OpenIV's
@@ -59,9 +64,9 @@ files), the time left and the file being worked on:
 
 - the package is read straight from the `.oiv` — nothing is extracted first, so even multi-GB packages
   start instantly;
-- a mod split into parts (`Package.1.oiv`, `Package.2.oiv`…) can be chosen or dropped together: the
-  parts install in order and are listed separately; each part can be removed on its own, or all parts
-  at once. Each file is its own mod, told apart by its file name;
+- a mod split into parts (`Package.1.oiv`, `PART ONE`, `p2`, `(3 of 4)`…) can be chosen or dropped
+  together: the parts install in order and show as one entry ("Mod · 3 parts") that opens to its parts;
+  each part can be removed on its own, or all parts at once;
 - files for `update\`, `x64\` or any `.rpf` always go to the `mods` folder (never into the original
   game files);
 - archive operations at any nesting depth: add / replace / delete files (binary, resource and nested
@@ -94,6 +99,7 @@ reverse:
 The **Installed mods** list on each game page shows what is installed there — mods and prepare steps —
 each with its own **Remove mod** button. **My Mods** shows everything installed on every game in one place,
 with the same buttons. Tick several mods (or **Select all**) to disable, enable or remove them together.
+Filter chips (OIV, Script, ASI, Setup…) and a search box find a mod quickly in a long list.
 
 ### Free Modexa mods
 Modexa packages (`.mxa`) published as free mods install in every edition, no license needed — on every
