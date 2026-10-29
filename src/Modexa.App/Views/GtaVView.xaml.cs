@@ -308,6 +308,11 @@ public partial class GtaVView : UserControl, IInstallHost
         string folder = _install.Folder;
         var steps = await Task.Run(() => PrepareService.InstalledSteps(folder));
         if (!steps.TryGetValue(step, out var record)) { await RefreshPrepareStateAsync(); return; }
+        // Purchased mods run through the Mod Runner: say so before it goes.
+        if (step == PrepareStep.ModRunner
+            && await Task.Run(() => InstalledModsStore.ForFolder(folder).Any(r => r.ProductId != null))
+            && !DialogWindow.Confirm(Loc.Instance["Lic_ModRunnerNeeded"], danger: true))
+            return;
         var records = await ModInstallPanel.ConfirmUninstallAsync(record);
         if (records == null) return;
 

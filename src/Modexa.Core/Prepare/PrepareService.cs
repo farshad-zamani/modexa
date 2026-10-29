@@ -457,7 +457,7 @@ public sealed class PrepareService
 
     // ---- Modexa.asi ------------------------------------------------------------------------------
 
-    /// <summary>Copies the embedded Modexa.asi (paid-mod entitlement gate) into the game root.</summary>
+    /// <summary>Copies the embedded Modexa.asi (Modexa's in-game helper) into the game root.</summary>
     private static bool InstallModexaAsi(string gameFolder, ModInstallRecord record)
     {
         if (Assembly.GetExecutingAssembly().GetManifestResourceInfo("Modexa.Core.Assets.Modexa.asi") == null)

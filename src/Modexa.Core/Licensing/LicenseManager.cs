@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -195,6 +195,15 @@ public static class LicenseManager
         if (!string.IsNullOrWhiteSpace(productId)) fields["product_id"] = productId.Trim();
         return new FormUrlEncodedContent(fields);
     }
+
+    /// <summary>The stored keys and what is needed to check them with the shop (for the engine).</summary>
+    public static Engine.LicenseCheckRequest CreateCheckRequest() => new()
+    {
+        Keys = LicenseStore.All().Select(l => new Engine.LicenseKeyRef(l.Key, l.ProductId)).ToList(),
+        ApiUrl = BaseApiUrl,
+        ApiKey = Secrets.ApiKey,
+        DeviceId = HardwareId.Get()
+    };
 
     /// <summary>Common form for the license-gated Modexa endpoints (engine / content key).</summary>
     internal static FormUrlEncodedContent BuildGateForm(string licenseKey, IDictionary<string, string> extra)

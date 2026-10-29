@@ -10,6 +10,7 @@ using Modexa.App.Services;
 using Modexa.App.Views;
 using Modexa.Core.Engine;
 using Modexa.Core.I18n;
+using Modexa.Core.Install;
 using Modexa.Core.Licensing;
 using Modexa.Core.Remote;
 using LicenseManager = Modexa.Core.Licensing.LicenseManager;
@@ -100,18 +101,13 @@ public partial class MainWindow : Window, INavigator
                 ThemeService.Apply(LicenseTier.Free);
                 if (!hadKeys) return;
 
-                // Keys exist but no longer validate (refunded / revoked / offline too long): drop the
-                // engine + cached content keys and revoke the on-disk entitlement so the ASI
-                // deactivates protected content on the next game launch.
-                var app = (App)Application.Current;
-                var folders = new[] { app.Settings.GtaVFolder, app.Settings.GtaVEnhancedFolder, app.Settings.GtaSaFolder };
-                await Task.Run(() =>
-                {
-                    EngineModule.Remove();
-                    foreach (var folder in folders)
-                        if (!string.IsNullOrWhiteSpace(folder))
-                            try { Modexa.Core.Drm.EntitlementService.RevokeEntitlement(folder!); } catch { }
-                });
+                // Keys exist but none validates any more (ended / refunded / offline too long). Purchased
+                // mods still installed follow their own licenses (notices, then removal), which needs
+                // the engine; with none left, the engine goes.
+                if (await Task.Run(() => InstalledModsStore.All().Any(r => r.ProductId != null)))
+                    await LicenseNotices.RunAsync(this);
+                else
+                    await Task.Run(EngineModule.Remove);
                 return;
             }
 
@@ -125,10 +121,20 @@ public partial class MainWindow : Window, INavigator
                 string? key = LicenseStore.Best()?.Key;
                 if (key != null)
                 {
-                    var engine = await Task.Run(() => EngineModule.EnsureAsync(key, LicenseTier.Pro));
-                    if (engine.Flavor == LicenseTier.Pro) ThemeService.Apply(LicenseTier.Pro);
+                    try
+                    {
+                        var engine = await Task.Run(() => EngineModule.EnsureAsync(key, LicenseTier.Pro));
+                        if (engine.Flavor == LicenseTier.Pro) ThemeService.Apply(LicenseTier.Pro);
+                    }
+                    catch (LicenseGateException ex) when (ex.Code == LicenseGateException.AppUpdate)
+                    {
+                        DialogWindow.Show(LicenseWindow.GateMessage(ex), DialogKind.Warning); // this version is retired
+                    }
                 }
             }
+
+            // Purchased mods: each follows its own license.
+            await LicenseNotices.RunAsync(this);
         }
         catch (Exception ex)
         {

@@ -177,6 +177,7 @@ public partial class LicenseWindow : Window
         LicenseGateException.Network => Loc.Instance["Gate_Network"],
         LicenseGateException.NotEntitled => Loc.Instance["Gate_NotEntitled"],
         LicenseGateException.BadModule => Loc.Instance["Gate_BadModule"],
+        LicenseGateException.AppUpdate => Loc.Instance["Gate_AppUpdate"],
         _ => Loc.Instance["Gate_Refused"]
     };
 

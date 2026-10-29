@@ -34,6 +34,21 @@ public interface IModEngine
 
     /// <summary>True when the game has an OPEN mods\update\update.rpf (add-ons can be registered).</summary>
     bool IsAddonReady(string gameFolder);
+
+    /// <summary>
+    /// Modexa is about to change a game folder (installing, removing, preparing). Only the outermost of
+    /// nested changes reaches the engine (see <see cref="Install.FolderChanges"/>).
+    /// </summary>
+    void BeginChanges(string gameFolder);
+
+    /// <summary>Modexa finished changing a game folder.</summary>
+    void EndChanges(string gameFolder);
+
+    /// <summary>An installed mod is about to be removed.</summary>
+    void Removing(ModInstallRecord record);
+
+    /// <summary>Checks the licenses of the installed purchased mods with the shop: one notice per product.</summary>
+    IReadOnlyList<ProductNotice> CheckLicenses(LicenseCheckRequest request);
 }
 
 /// <summary>Pro-only capabilities (present only in the Pro build of the module).</summary>
@@ -56,7 +71,46 @@ public interface IProModEngine : IModEngine
 
 public static class ModEngineContract
 {
-    public const int ApiVersion = 5;
+    public const int ApiVersion = 6;
+}
+
+/// <summary>One stored license key (a purchased mod's key names its product; null for a Pro key).</summary>
+public sealed record LicenseKeyRef(string Key, string? ProductId);
+
+/// <summary>What <see cref="IModEngine.CheckLicenses"/> checks, and how to reach the shop.</summary>
+public sealed class LicenseCheckRequest
+{
+    public IReadOnlyList<LicenseKeyRef> Keys { get; init; } = Array.Empty<LicenseKeyRef>();
+    public string ApiUrl { get; init; } = "";
+    public string ApiKey { get; init; } = "";
+    public string DeviceId { get; init; } = "";
+}
+
+public enum ProductLicenseState
+{
+    /// <summary>A license covers it.</summary>
+    Active,
+    /// <summary>Covered, but its time ends within a few days.</summary>
+    EndsSoon,
+    /// <summary>No license covers it any more: it is off in the game until a new license is entered.</summary>
+    Ended,
+    /// <summary>Ended, and the time to enter a new license has passed: remove it from the game.</summary>
+    RemoveNow,
+    /// <summary>The shop could not be reached: nothing changed.</summary>
+    Unknown
+}
+
+/// <summary>The license state of one purchased mod (product).</summary>
+public sealed class ProductNotice
+{
+    public string ProductId { get; init; } = "";
+    public ProductLicenseState State { get; init; }
+    /// <summary>When the license time ends (null = no end, or not known).</summary>
+    public DateTime? EndsUtc { get; init; }
+    /// <summary>Ended: until when a new license can be entered before the mod is removed.</summary>
+    public DateTime? RemoveAfterUtc { get; init; }
+    /// <summary>Stored keys of this product the shop no longer accepts (safe to forget).</summary>
+    public IReadOnlyList<string> EndedKeys { get; init; } = Array.Empty<string>();
 }
 
 /// <summary>What a listed item is, for the app.</summary>

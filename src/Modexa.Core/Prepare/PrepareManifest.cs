@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -89,7 +89,7 @@ public sealed class BundleEntry
     /// <summary>Optional gameconfig.xml variants to install into mods\update\update.rpf.</summary>
     [JsonPropertyName("gameConfig")] public GameConfigSpec? GameConfig { get; set; }
 
-    /// <summary>Also install Modexa.asi (the paid-mod entitlement gate) — set on Mod Runner bundles.</summary>
+    /// <summary>Also install Modexa.asi (Modexa's in-game helper) — set on Mod Runner bundles.</summary>
     [JsonPropertyName("modexaAsi")] public bool ModexaAsi { get; set; }
 
     /// <summary>Also install the bundled OpenIV mods-folder enabler (Legacy GTA V only).</summary>

@@ -41,14 +41,22 @@ public static class ModActions
             if (p.Key == InstallPhase.Hide) host?.HideBusy();
             else host?.ShowBusy(p);
         });
+        // One bracket around the whole action, however many mods it touches.
+        var folders = items.Select(i => i.GameFolder).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         try
         {
-            ModResult? result = action switch
+            await Task.Run(() => folders.ForEach(FolderChanges.Begin));
+            ModResult? result;
+            try
             {
-                ModAction.Remove => await RemoveAsync(items, single, phase),
-                ModAction.Disable => await DisableAsync(items.Where(i => i.CanDisable).Select(i => i.Record!).ToList(), single, phase),
-                _ => await EnableAsync(items.Where(i => i.Disabled != null).Select(i => i.Disabled!).ToList(), single, owner, phase)
-            };
+                result = action switch
+                {
+                    ModAction.Remove => await RemoveAsync(items, single, phase),
+                    ModAction.Disable => await DisableAsync(items.Where(i => i.CanDisable).Select(i => i.Record!).ToList(), single, phase),
+                    _ => await EnableAsync(items.Where(i => i.Disabled != null).Select(i => i.Disabled!).ToList(), single, owner, phase)
+                };
+            }
+            finally { await Task.Run(() => folders.ForEach(FolderChanges.End)); }
             busy = false;
             host?.HideBusy();
             if (result == null) return false;

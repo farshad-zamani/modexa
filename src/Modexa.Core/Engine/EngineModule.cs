@@ -18,6 +18,7 @@ public sealed class LicenseGateException : Exception
     public const string NotEntitled = "not_entitled"; // license doesn't cover this product
     public const string Network = "network";          // offline / timeout / 5xx
     public const string BadModule = "bad_module";     // download isn't a valid engine
+    public const string AppUpdate = "app_update";     // this app version's engine is no longer offered
 
     public string Code { get; }
     public LicenseGateException(string code, string message, Exception? inner = null) : base(message, inner) => Code = code;
@@ -150,6 +151,17 @@ public static class EngineModule
         return key;
     }
 
+    /// <summary>Drops a product's cached key (its license ended): opening its packages needs the server again.</summary>
+    public static void ForgetContentKey(string? productId)
+    {
+        try
+        {
+            string cache = Path.Combine(KeysDir, KeyFileName(productId));
+            if (File.Exists(cache)) File.Delete(cache);
+        }
+        catch { }
+    }
+
     private static async Task<byte[]> RequestKeyAsync(string? productId, string licenseKey, CancellationToken ct)
     {
         using var http = NewClient(TimeSpan.FromSeconds(20));
@@ -248,6 +260,9 @@ public static class EngineModule
         {
             int status = (int)resp.StatusCode;
             if (status >= 500) throw new LicenseGateException(LicenseGateException.Network, $"Download server error ({status}).");
+            // No engine for this version at its link: this version is no longer supported.
+            if (status is 403 or 404 or 410)
+                throw new LicenseGateException(LicenseGateException.AppUpdate, "This version of Modexa is no longer supported. Update Modexa.");
             if (!resp.IsSuccessStatusCode)
                 throw new LicenseGateException(LicenseGateException.BadModule, $"The engine download failed ({status}).");
 

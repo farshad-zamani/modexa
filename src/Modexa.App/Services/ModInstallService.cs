@@ -88,8 +88,12 @@ public static class ModInstallService
     /// are confirmed together, once.
     /// </summary>
     /// <param name="confirm">False when the user already chose to install (e.g. enabling a disabled mod).</param>
-    public static async Task<List<ModResult>> InstallManyAsync(IReadOnlyList<string> paths, GameTarget target, Window owner,
+    public static Task<List<ModResult>> InstallManyAsync(IReadOnlyList<string> paths, GameTarget target, Window owner,
         IProgress<InstallPhase>? phase, bool confirm = true)
+        => FolderChanges.RunAsync(target.Folder, () => InstallManyCoreAsync(paths, target, owner, phase, confirm));
+
+    private static async Task<List<ModResult>> InstallManyCoreAsync(IReadOnlyList<string> paths, GameTarget target, Window owner,
+        IProgress<InstallPhase>? phase, bool confirm)
     {
         var ordered = paths.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(Path.GetFileName, NaturalComparer.Instance).ToList();
         var oivs = target.IsGtaV ? ordered.Where(OivInstaller.IsPackageFile).ToList() : new List<string>();
@@ -122,7 +126,10 @@ public static class ModInstallService
     }
 
     /// <summary>Routes a file to the right installer for <paramref name="target"/>.</summary>
-    public static async Task<ModResult> InstallAsync(string path, GameTarget target, Window owner, IProgress<InstallPhase>? phase)
+    public static Task<ModResult> InstallAsync(string path, GameTarget target, Window owner, IProgress<InstallPhase>? phase)
+        => FolderChanges.RunAsync(target.Folder, () => InstallOneAsync(path, target, owner, phase));
+
+    private static async Task<ModResult> InstallOneAsync(string path, GameTarget target, Window owner, IProgress<InstallPhase>? phase)
     {
         if (path.EndsWith(MxaFile.Extension, StringComparison.OrdinalIgnoreCase))
             return await InstallPackageAsync(path, target, owner, phase);
@@ -290,6 +297,8 @@ public static class ModInstallService
 
         // A free Modexa mod: no license, no engine — every edition installs it.
         if (!info.Licensed) return await InstallFreePackageAsync(mxaPath, info, target, phase);
+        // A purchased GTA V mod runs through Modexa.asi, which the Mod Runner's ASI loader loads.
+        if (target.IsGtaV && !await Task.Run(() => HasAsiLoader(target.Folder))) return Fail("Lic_NeedsModRunner");
 
         // 1) A license for this product. Each paid mod is its own product with its own key.
         var license = LicenseStore.ForProduct(info.ProductId);
@@ -341,8 +350,6 @@ public static class ModInstallService
                     Stamp(rec, target, mxaPath, info.Name);
                     rec.Author ??= string.IsNullOrWhiteSpace(info.Author) ? null : info.Author;
                     InstalledModsStore.Add(rec);
-                    // Machine-bound entitlement: the ASI keeps this content active only on this PC.
-                    try { Modexa.Core.Drm.EntitlementService.RegisterInstall(target.Folder, rec, info.ProductId); } catch { }
                     return rec;
                 });
                 return Success(record);
@@ -641,10 +648,11 @@ public static class ModInstallService
     /// <summary>The loaded Pro engine, downloading it for an existing PRO key or offering activation.</summary>
     private static async Task<IProModEngine?> GetProEngineAsync(Window owner, IProgress<InstallPhase>? phase)
     {
-        if (EngineModule.Load() is IProModEngine loaded) return loaded;
+        // Pro features follow the verified license, not the engine file left on disk.
+        if (ThemeService.CurrentTier == LicenseTier.Pro && EngineModule.Load() is IProModEngine loaded) return loaded;
 
         var best = LicenseStore.Best();
-        if (best?.Tier == LicenseTier.Pro)
+        if (best?.Tier == LicenseTier.Pro && ThemeService.CurrentTier == LicenseTier.Pro)
         {
             try
             {
@@ -676,6 +684,14 @@ public static class ModInstallService
     {
         if (records.Count == 0) return new ModResult(false, "", Cancelled: true);
         if (await Task.Run(() => GameProcess.IsRunning(records[0].GameFolder))) return Fail("Mods_GameRunning");
+        var folders = records.Select(r => r.GameFolder).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        await Task.Run(() => folders.ForEach(FolderChanges.Begin));
+        try { return await UninstallCoreAsync(records, phase); }
+        finally { await Task.Run(() => folders.ForEach(FolderChanges.End)); }
+    }
+
+    private static async Task<ModResult> UninstallCoreAsync(IReadOnlyList<ModInstallRecord> records, IProgress<InstallPhase>? phase)
+    {
         var errors = new List<string>();
         var kept = new List<string>();
         long freed = 0;
@@ -716,6 +732,10 @@ public static class ModInstallService
     }
 
     public static Task<ModResult> UninstallAsync(ModInstallRecord record) => UninstallAsync(new[] { record });
+
+    /// <summary>The game loads ASI plugins (the Mod Runner's loader is in the game folder).</summary>
+    public static bool HasAsiLoader(string gameFolder)
+        => new[] { "dinput8.dll", "xinput1_4.dll", "dsound.dll", "version.dll" }.Any(f => File.Exists(Path.Combine(gameFolder, f)));
 
     /// <summary>Installed records that are parts of the same split mod as <paramref name="record"/> (itself included).</summary>
     public static List<ModInstallRecord> PartsOf(ModInstallRecord record)

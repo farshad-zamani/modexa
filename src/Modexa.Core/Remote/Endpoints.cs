@@ -18,11 +18,24 @@ public static class Endpoints
     /// <summary>FSLM license API (activate / verify).</summary>
     public const string LicenseApi = "https://rockstargame.ir/";
 
-    /// <summary>Per-tier engine download (static). The app picks by the license tier.</summary>
-    public const string EnginePlus = "https://dl.wtmod.com/mods/apps/modexa/plus/Modexa.Support.dll";
-    public const string EnginePro = "https://dl.wtmod.com/mods/apps/modexa/pro/Modexa.Support.dll";
+    /// <summary>Engine downloads (static), one folder per app version: …/modexa/&lt;version&gt;/{plus|pro}/.</summary>
+    public const string EngineRoot = "https://dl.wtmod.com/mods/apps/modexa/";
 
-    public static string EngineFor(LicenseTier tier) => tier == LicenseTier.Pro ? EnginePro : EnginePlus;
+    /// <summary>
+    /// The engine of this app version and tier. Every release adds its own folder and older ones stay,
+    /// so an app that isn't updated keeps finding the engine it was built with.
+    /// </summary>
+    public static string EngineFor(LicenseTier tier) => $"{EngineRoot}{AppVersion}/{(tier == LicenseTier.Pro ? "pro" : "plus")}/Modexa.Support.dll";
+
+    /// <summary>"1.7.0" (major.minor.build of this build).</summary>
+    public static string AppVersion
+    {
+        get
+        {
+            var v = typeof(Endpoints).Assembly.GetName().Version ?? new Version(1, 0, 0);
+            return $"{v.Major}.{v.Minor}.{Math.Max(v.Build, 0)}";
+        }
+    }
 
     /// <summary>License-gated per-product content key (POST) used to open a purchased .mxa.</summary>
     public const string ContentKey = "https://rockstargame.ir/wp-json/modexa/key";

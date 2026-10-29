@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using Modexa.Core.Diagnostics;
 using Modexa.Core.Rpf;
 
@@ -39,6 +39,9 @@ public static class ModUninstaller
 {
     /// <summary>Uninstalls every mod in a game folder, newest first. Returns what could not be undone.</summary>
     public static List<string> UninstallAll(string gameFolder, IProgress<string>? step = null)
+        => FolderChanges.Run(gameFolder, () => UninstallAllCore(gameFolder, step));
+
+    private static List<string> UninstallAllCore(string gameFolder, IProgress<string>? step)
     {
         var errors = new List<string>();
         foreach (var r in Enumerable.Reverse(InstalledModsStore.ForFolder(gameFolder)))
@@ -52,6 +55,13 @@ public static class ModUninstaller
     }
 
     public static UninstallResult Uninstall(ModInstallRecord record, IProgress<string>? step = null)
+        => FolderChanges.Run(record.GameFolder, () =>
+        {
+            FolderChanges.Removing(record);
+            return UninstallCore(record, step);
+        });
+
+    private static UninstallResult UninstallCore(ModInstallRecord record, IProgress<string>? step)
     {
         var result = new UninstallResult();
         var all = InstalledModsStore.All();
@@ -91,10 +101,7 @@ public static class ModUninstaller
             catch (Exception ex) { result.Errors.Add($"dlclist.xml: {ex.Message}"); }
         }
 
-        // 4) Paid-content protection list.
-        try { Drm.EntitlementService.UnregisterInstall(folder, record, all); } catch { }
-
-        // 5) The archive copies, then folders the mod created.
+        // 4) The archive copies, then folders the mod created.
         foreach (var a in released)
         {
             try
@@ -109,7 +116,7 @@ public static class ModUninstaller
         }
         InstallDirs.PruneCreated(record);
 
-        // 6) Archives other mods still use keep their size after files are put back (every write
+        // 5) Archives other mods still use keep their size after files are put back (every write
         //    appends): rewrite them without the dead space when that is worth it.
         if (result.Success)
             foreach (var a in record.Archives.Where(a => !released.Contains(a)))
