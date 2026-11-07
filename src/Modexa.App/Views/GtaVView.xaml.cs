@@ -158,6 +158,7 @@ public partial class GtaVView : UserControl, IInstallHost
         _folderKey = null;
         RefreshFolderText();
         BtnOpenFolder.IsEnabled = true;
+        RunningBar.Folder = install.Folder;
         InstallPanel.SetTarget(new GameTarget(GameCatalog.ForEdition(_edition), install.Folder,
             GameCatalog.Get(GameCatalog.ForEdition(_edition)).DisplayName, _edition));
         EditionText.Text = install.Edition == GameEdition.Unknown ? "—" : install.Edition.ToString();
@@ -234,6 +235,8 @@ public partial class GtaVView : UserControl, IInstallHost
         var done = await Task.Run(() => PrepareService.InstalledSteps(folder));
         var todo = new[] { PrepareStep.ModRunner, PrepareStep.GameConfig }.Where(s => !done.ContainsKey(s)).ToList();
         if (todo.Count == 0) { DialogWindow.Show(Loc.Instance["GtaV_PrepareAll_Ready"], DialogKind.Success); return; }
+        if (!await GameProcess.EnsureClosedAsync(folder)) return;
+        if (_cts != null) return;
 
         _cts = new CancellationTokenSource();
         Busy.Show("Dl_Downloading", cancellable: true);
@@ -346,6 +349,8 @@ public partial class GtaVView : UserControl, IInstallHost
             return;
         }
         if (_cts != null) return; // a step is already running
+        if (!await GameProcess.EnsureClosedAsync(_install.Folder)) return; // its files are locked while the game is open
+        if (_cts != null) return;
 
         _cts = new CancellationTokenSource();
         Busy.Show("Dl_Downloading", cancellable: true);
@@ -557,11 +562,7 @@ public partial class GtaVView : UserControl, IInstallHost
         if (!DialogWindow.Confirm(Loc.Instance["GtaV_Revert_Confirm"], danger: true))
             return;
 
-        if (await Task.Run(() => GameProcess.IsRunning(folder)))
-        {
-            DialogWindow.Show(Loc.Instance["Mods_GameRunning"], DialogKind.Warning);
-            return;
-        }
+        if (!await GameProcess.EnsureClosedAsync(folder)) return;
 
         Busy.Show("Dl_Restoring");
         try
@@ -612,8 +613,11 @@ public partial class GtaVView : UserControl, IInstallHost
     {
         if (_install == null) { CleanLaunchToggle.IsEnabled = false; return; }
         string folder = _install.Folder;
-        bool clean = await Task.Run(() => CleanLaunchService.IsCleanLaunchEnabled(folder));
-        CleanLaunchToggle.IsChecked = clean;
-        CleanLaunchToggle.IsEnabled = true;
+        var state = await Task.Run(() => CleanLaunchService.GetState(folder));
+        // Nothing to switch off while the game has no mod loader (it isn't prepared): "clean" is not a state then.
+        CleanLaunchToggle.IsChecked = state == CleanLaunchService.State.Clean;
+        CleanLaunchToggle.IsEnabled = state != CleanLaunchService.State.NoLoader;
+        if (state == CleanLaunchService.State.NoLoader) CleanLaunchToggle.SetBinding(ToolTipProperty, Tr.B("GtaV_CleanLaunch_NeedsPrepare"));
+        else CleanLaunchToggle.ClearValue(ToolTipProperty);
     }
 }

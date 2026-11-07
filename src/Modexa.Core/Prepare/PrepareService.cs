@@ -315,6 +315,16 @@ public sealed class PrepareService
         return found;
     }
 
+    /// <summary>
+    /// GTA V reads the <c>mods</c> folder (where OpenIV packages and add-ons install) only when the Mod
+    /// Runner's mods-folder enabler is in the game folder (OpenIV.asi on Legacy, OpenRPF.asi on Enhanced). It
+    /// doesn't matter who put it there — Modexa or the user.
+    /// </summary>
+    public static bool IsReadyForMods(string gameFolder)
+    {
+        bool Has(string name) => File.Exists(Path.Combine(gameFolder, name)) || File.Exists(Path.Combine(gameFolder, name + CleanLaunchService.DisabledSuffix));
+        return Has("OpenIV.asi") || Has("OpenRPF.asi");
+    }
     private static string StepName(GameId game, PrepareStep step) => step switch
     {
         PrepareStep.GameConfig => "GameConfig",
@@ -340,7 +350,7 @@ public sealed class PrepareService
     /// Expands any <c>*</c> segment in a map's <c>from</c> to the concrete version folder present in
     /// the archive, preferring the one matching <paramref name="versionToken"/>.
     /// </summary>
-    private static (List<BundleMap> maps, string? versionWarning) ResolveMaps(
+    internal static (List<BundleMap> maps, string? versionWarning) ResolveMaps(
         BundleEntry bundle, IReadOnlyList<string> files, string? versionToken)
     {
         var result = new List<BundleMap>();
@@ -362,17 +372,21 @@ public sealed class PrepareService
             KeyValuePair<string, string>? pick = null;
             if (!string.IsNullOrWhiteSpace(versionToken))
                 foreach (var kv in candidates)
-                    if (VersionMatches(kv.Value, versionToken!)) { pick = kv; break; }
+                    if (bundle.ExactVersion ? CyberpunkPatch.Same(CyberpunkPatch.Parse(kv.Value), versionToken) : VersionMatches(kv.Value, versionToken!)) { pick = kv; break; }
 
             if (pick == null)
             {
-                if (bundle.RequireVersionMatch && !string.IsNullOrWhiteSpace(versionToken))
-                    throw new PrepareVersionException(versionToken!,
-                        candidates.Values.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+                // The versions the pack has, as they are named ("2.31"), newest last.
+                List<string> Available() => candidates.Values.Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Select(v => bundle.ExactVersion ? CyberpunkPatch.Parse(v) ?? v : v)
+                    .OrderBy(v => v, Comparer<string>.Create((a, b) => bundle.ExactVersion ? CyberpunkPatch.Compare(a, b) : string.Compare(a, b, StringComparison.OrdinalIgnoreCase)))
+                    .ToList();
+                // A runner made for another version is never installed when the game's version isn't known either.
+                if (bundle.RequireVersionMatch && (!string.IsNullOrWhiteSpace(versionToken) || bundle.ExactVersion))
+                    throw new PrepareVersionException(versionToken ?? "", Available());
                 pick = candidates.First();
                 if (!string.IsNullOrWhiteSpace(versionToken)) warning = pick.Value.Value;
             }
-
             result.Add(new BundleMap { From = pick.Value.Key, To = map.To });
         }
         return (result, warning);

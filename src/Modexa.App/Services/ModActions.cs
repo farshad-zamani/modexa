@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Windows;
 using Modexa.App.Views;
 using Modexa.Core.Diagnostics;
@@ -10,7 +10,8 @@ using WinForms = System.Windows.Forms;
 
 namespace Modexa.App.Services;
 
-public enum ModAction { Remove, Disable, Enable }
+/// <summary>Forget = take a mod whose files are gone from the game off the list (nothing in the game is touched).</summary>
+public enum ModAction { Remove, Disable, Enable, Forget }
 
 /// <summary>
 /// Remove / disable / enable for the installed-mods lists, one mod or many at once.
@@ -53,6 +54,7 @@ public static class ModActions
                 {
                     ModAction.Remove => await RemoveAsync(items, single, phase),
                     ModAction.Disable => await DisableAsync(items.Where(i => i.CanDisable).Select(i => i.Record!).ToList(), single, phase),
+                    ModAction.Forget => await ForgetAsync(items),
                     _ => await EnableAsync(items.Where(i => i.Disabled != null).Select(i => i.Disabled!).ToList(), single, owner, phase)
                 };
             }
@@ -121,6 +123,31 @@ public static class ModActions
         return result with { Message = result.Message + "\n" + string.Join("\n", forget.Select(d => Loc.Instance.Format("Mods_Removed_Disabled", d.Name))) };
     }
 
+    // ---- forget (files gone) -------------------------------------------------------------------------
+
+    /// <summary>
+    /// A mod whose files are no longer in the game (another program, a restored backup, a moved game folder): there is nothing
+    /// to undo, so it is just taken off the list, with the originals Modexa kept for it.
+    /// </summary>
+    private static async Task<ModResult?> ForgetAsync(IReadOnlyList<ModItem> items)
+    {
+        await Task.Run(() =>
+        {
+            foreach (var r in items.Where(i => i.Record != null).Select(i => i.Record!))
+            {
+                try { FolderChanges.Removing(r); } catch { }
+                try
+                {
+                    string dir = ModBackups.DirFor(r);
+                    if (Directory.Exists(dir)) Directory.Delete(dir, true);
+                }
+                catch { }
+                InstalledModsStore.Remove(r.Id);
+            }
+        });
+        return new ModResult(true, "");
+    }
+
     // ---- disable -----------------------------------------------------------------------------------
 
     private static async Task<ModResult?> DisableAsync(List<ModInstallRecord> records, bool single, IProgress<InstallPhase> phase)
@@ -150,7 +177,7 @@ public static class ModActions
             return null;
 
         string folder = records[0].GameFolder;
-        if (await Task.Run(() => GameProcess.IsRunning(folder))) return new ModResult(false, Loc.Instance["Mods_GameRunning"]);
+        if (!await GameProcess.EnsureClosedAsync(folder)) return new ModResult(false, "", Cancelled: true);
 
         // The mod file is needed to turn the mod on again: find it (or let the user point to it) first.
         var plan = new List<(ModInstallRecord Record, string Path)>();
@@ -185,6 +212,8 @@ public static class ModActions
                 Name = title,
                 ModType = r.ModType,
                 Kind = r.KindLabel,
+                Kinds = r.Kinds.ToList(),
+                Note = r.Note,
                 Game = r.Game,
                 GameTitle = r.GameTitle,
                 GameFolder = r.GameFolder,
@@ -274,6 +303,7 @@ public static class ModActions
                 foreach (var rec in r.Select(x => x.Record).Where(x => x != null))
                 {
                     if (m.OriginalPath != null && File.Exists(m.OriginalPath)) rec!.SourcePath = m.OriginalPath;
+                    if (!string.IsNullOrWhiteSpace(m.Note)) rec!.Note = m.Note; // the note comes back with the mod
                     InstalledModsStore.Update(new[] { rec! });
                 }
                 DisabledModsStore.Remove(m.Id);
@@ -290,7 +320,7 @@ public static class ModActions
         var target = TargetFor(m.Game, m.GameFolder, m.GameTitle);
         try
         {
-            if (await Task.Run(() => GameProcess.IsRunning(m.GameFolder))) return new ModResult(false, Loc.Instance["Mods_GameRunning"]);
+            if (!await GameProcess.EnsureClosedAsync(m.GameFolder)) return new ModResult(false, "", Cancelled: true);
             var manifest = await Task.Run(Modexa.Core.Prepare.PrepareManifest.LoadLocal);
             var (build, token) = await Task.Run(() => target.IsGtaV
                 ? (GameVersion.Detect(m.GameFolder)?.Build ?? 0, (string?)null)
@@ -300,6 +330,12 @@ public static class ModActions
                 progress, default, (variants, def) => Task.FromResult<string?>(m.Version != null && variants.Contains(m.Version) ? m.Version : def));
             if (r.GameConfig == Modexa.Core.Prepare.GameConfigOutcome.GameTooOld)
                 return new ModResult(false, Loc.Instance.Format("Prep_GameTooOld", build, r.ConfigFor ?? "?"));
+            // The note comes back with the step.
+            if (!string.IsNullOrWhiteSpace(m.Note) && Modexa.Core.Prepare.PrepareService.InstalledSteps(m.GameFolder).TryGetValue(step, out var back))
+            {
+                back.Note = m.Note;
+                InstalledModsStore.Update(new[] { back });
+            }
             DisabledModsStore.Remove(m.Id);
             return new ModResult(true, Loc.Instance.Format("Mods_Installed_Ok", m.Name));
         }

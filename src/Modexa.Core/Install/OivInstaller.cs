@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -883,7 +883,7 @@ public static class OivInstaller
             }
         }
 
-        return changed ? XmlFiles.Save(doc) : xml;
+        return changed ? XmlFiles.Save(doc, xml) : xml;
     }
 
     /// <summary>A positional XPath to a node (e.g. /CVehicleModelInfo/InitDatas[1]) so it can be found again.</summary>

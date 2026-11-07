@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Xml;
@@ -119,7 +119,7 @@ public sealed class EditJournal
                 else parent.AppendChild(node);
                 changed = true;
             }
-            return changed ? XmlFiles.Save(doc) : null;
+            return changed ? XmlFiles.Save(doc, content) : null;
         }
         catch (Exception ex)
         {
@@ -415,10 +415,12 @@ public sealed class ArchiveEditRecorder
 /// <summary>Serializes an XmlDocument back to text the way the game files are written (UTF-8, no re-indent).</summary>
 public static class XmlFiles
 {
-    public static string Save(XmlDocument doc)
+    /// <param name="source">The text the document was read from: its line endings are kept (LF-only files stay LF-only).</param>
+    public static string Save(XmlDocument doc, string? source = null)
     {
+        string newline = source != null && source.Contains('\n') && !source.Contains("\r\n") ? "\n" : "\r\n";
         using var sw = new Utf8StringWriter();
-        using (var xw = XmlWriter.Create(sw, new XmlWriterSettings { OmitXmlDeclaration = true, Indent = false }))
+        using (var xw = XmlWriter.Create(sw, new XmlWriterSettings { OmitXmlDeclaration = true, Indent = false, NewLineChars = newline, NewLineHandling = NewLineHandling.Replace }))
             doc.Save(xw);
         // Keep the file's own declaration exactly (e.g. encoding="UTF-8"), not the writer's.
         return doc.FirstChild is XmlDeclaration decl ? decl.OuterXml + sw : sw.ToString();

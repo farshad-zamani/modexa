@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 
 namespace Modexa.Core.Games;
@@ -25,6 +25,8 @@ public sealed record SimpleGame(
     public string? DetectVersion(string folder)
     {
         if (VersionExe == null) return null;
+        // Cyberpunk's mods are made for a patch (2.31), not for the exe's build number.
+        if (Id == GameId.Cyberpunk2077) return CyberpunkPatch.Detect(folder);
         try
         {
             string exe = Path.Combine(folder, VersionExe);

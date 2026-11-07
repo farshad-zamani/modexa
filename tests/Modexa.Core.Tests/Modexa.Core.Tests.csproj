@@ -17,4 +17,9 @@
     <ProjectReference Include="..\..\src\Modexa.Core\Modexa.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Real-world sample files (e.g. a dlclist.xml with odd spacing) the tests compare byte for byte. -->
+    <None Update="Fixtures\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using Modexa.App.Navigation;
 using Modexa.App.Services;
@@ -32,8 +32,16 @@ public partial class SimpleGameView : UserControl, IInstallHost
         _game = game;
         _def = SimpleGames.Get(game);
         InitializeComponent();
+        InstallPanel.Game = game;
         TitleText.Text = GameCatalog.Get(game).DisplayName;
         Backdrop.SetGame(game);
+        // Cyberpunk 2077 has its own tools (RED4ext, CET…): its texts say so, instead of the loader/ASI wording of the others.
+        if (game == GameId.Cyberpunk2077)
+        {
+            SubtitleText.SetBinding(TextBlock.TextProperty, Tr.B("Cp_Subtitle"));
+            PrepareDescText.SetBinding(TextBlock.TextProperty, Tr.B("Cp_Prepare_Desc"));
+            StepRunner.SetBinding(StepCard.DescriptionProperty, Tr.B("Cp_Step_Desc"));
+        }
         Loaded += OnLoaded;
         Unloaded += (_, _) => Loc.Instance.LanguageChanged -= RefreshFolderText;
         InstallPanel.Host = this;
@@ -47,6 +55,8 @@ public partial class SimpleGameView : UserControl, IInstallHost
     public GameId Game => _game;
 
     public Task InstallFileAsync(string path) => InstallPanel.InstallAsync(path);
+
+    public Task InstallFilesAsync(IReadOnlyList<string> paths) => InstallPanel.InstallAsync(paths);
 
     public void ShowBusy(InstallPhase phase) => Busy.Update(phase);
 
@@ -102,9 +112,12 @@ public partial class SimpleGameView : UserControl, IInstallHost
             app.Settings.SetSimpleFolder(_game, _folder);
             app.Settings.Save();
         }
-        VersionChip.Visibility = _folder != null && _version != null ? Visibility.Visible : Visibility.Collapsed;
-        VersionText.Text = _version ?? "—";
+        // Cyberpunk: when the patch can't be told, the game's file version is shown (and the patch asked when it matters).
+        string? shown = _version ?? (_game == GameId.Cyberpunk2077 && _folder != null ? CyberpunkPatch.RawVersion(_folder) : null);
+        VersionChip.Visibility = _folder != null && shown != null ? Visibility.Visible : Visibility.Collapsed;
+        VersionText.Text = shown ?? "—";
         BtnOpenFolder.IsEnabled = _folder != null;
+        RunningBar.Folder = _folder;
         InstallPanel.SetTarget(_folder == null ? null
             : new GameTarget(_game, _folder, GameCatalog.Get(_game).DisplayName, GameEdition.Unknown));
         RefreshFolderText();
@@ -192,6 +205,9 @@ public partial class SimpleGameView : UserControl, IInstallHost
             return;
         }
         if (_cts != null) return;
+        if (!await GameProcess.EnsureClosedAsync(_folder)) return; // its files are locked while the game is open
+        if (_cts != null) return;
+        bool retry = false;
 
         _cts = new CancellationTokenSource();
         Busy.Show("Dl_Downloading", cancellable: true);
@@ -207,13 +223,24 @@ public partial class SimpleGameView : UserControl, IInstallHost
             if (result.VersionWarning != null)
                 DialogWindow.Show(Loc.Instance.Format("Simple_VersionWarn", result.VersionWarning, _version ?? "?"), DialogKind.Warning);
             else
-                DialogWindow.Show(Loc.Instance["Simple_RunnerDone"], DialogKind.Success);
+                DialogWindow.Show(Loc.Instance[_game == GameId.Cyberpunk2077 ? "Cp_RunnerDone" : "Simple_RunnerDone"], DialogKind.Success);
         }
         catch (OperationCanceledException) { Busy.Hide(); }
         catch (PrepareVersionException ex)
         {
             Busy.Hide();
-            DialogWindow.Show(Loc.Instance.Format("Simple_VersionUnsupported", ex.Detected, string.Join("، ", ex.Available)), DialogKind.Warning);
+            if (_game == GameId.Cyberpunk2077 && string.IsNullOrEmpty(ex.Detected))
+            {
+                // The game's patch isn't known: ask once (remembered for this build), then go on. Nothing is installed by guessing.
+                if (ModInstallService.AskCyberpunkPatch(_folder!, ex.Available) is { } patch)
+                {
+                    _version = patch;
+                    SetFolder(_folder, patch);
+                    retry = true;
+                }
+            }
+            else
+                DialogWindow.Show(Loc.Instance.Format("Simple_VersionUnsupported", ex.Detected, string.Join(Loc.Instance.IsRtl ? "، " : ", ", ex.Available)), DialogKind.Warning);
         }
         catch (PrepareNotConfiguredException)
         {
@@ -240,6 +267,7 @@ public partial class SimpleGameView : UserControl, IInstallHost
             await RefreshStateAsync();
             InstallPanel.Refresh();
         }
+        if (retry) await RunAsync();
     }
 
     private async void Revert_Click(object sender, RoutedEventArgs e)
@@ -252,6 +280,7 @@ public partial class SimpleGameView : UserControl, IInstallHost
             return;
         }
         if (!DialogWindow.Confirm(Loc.Instance["GtaV_Revert_Confirm"], danger: true)) return;
+        if (!await GameProcess.EnsureClosedAsync(folder)) return;
 
         Busy.Show("Dl_Restoring");
         try

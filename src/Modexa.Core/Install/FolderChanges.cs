@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using Modexa.Core.Diagnostics;
 using Modexa.Core.Engine;
 
@@ -48,6 +48,12 @@ public static class FolderChanges
             Depth.Remove(key);
         }
         Call(e => e.EndChanges(key), "end");
+    }
+
+    /// <summary>The game was closed (or isn't running): whatever it left open is put away. Not while Modexa is changing the folder.</summary>
+    public static void Settled(string gameFolder)
+    {
+        if (!InScope(gameFolder)) Call(e => e.EndChanges(Key(gameFolder)), "settled");
     }
 
     /// <summary>An installed mod is about to be removed.</summary>

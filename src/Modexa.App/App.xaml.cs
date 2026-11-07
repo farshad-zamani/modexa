@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 using Modexa.App.Services;
@@ -62,6 +62,9 @@ public partial class App : Application
         }
 
         Settings = AppSettings.Load();
+        // Cyberpunk 2077: a patch the user named for a game build is remembered.
+        Modexa.Core.Games.CyberpunkPatch.Remembered = () => Settings.CyberpunkPatches;
+        Modexa.Core.Games.CyberpunkPatch.Remember = (build, patch) => { Settings.CyberpunkPatches[build] = patch; Settings.Save(); };
 
         // First run (or no saved language): ask for a language before anything else.
         if (string.IsNullOrWhiteSpace(Settings.Language))

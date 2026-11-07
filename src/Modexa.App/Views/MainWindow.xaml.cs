@@ -362,7 +362,9 @@ public partial class MainWindow : Window, INavigator
         var gtaFiles = paths.Where(p => !p.EndsWith(Modexa.Core.Format.MxaFile.Extension, StringComparison.OrdinalIgnoreCase)).ToList();
         if (gtaFiles.Count > 0)
         {
-            if (PART_Content.Content is GtaVView here) await here.InstallFilesAsync(gtaFiles);
+            // Archives and folders dropped on the Cyberpunk 2077 page are Cyberpunk mods.
+            if (PART_Content.Content is SimpleGameView { Game: Modexa.Core.Games.GameId.Cyberpunk2077 } cp) await cp.InstallFilesAsync(gtaFiles);
+            else if (PART_Content.Content is GtaVView here) await here.InstallFilesAsync(gtaFiles);
             else if (ChooseGtaVEdition() is { } edition) Navigate(new GtaVView(this, edition) { PendingFiles = gtaFiles });
         }
         foreach (var mxa in paths.Except(gtaFiles))

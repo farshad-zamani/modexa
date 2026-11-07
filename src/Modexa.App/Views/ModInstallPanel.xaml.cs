@@ -55,7 +55,11 @@ public partial class ModInstallPanel : UserControl, IModListHost
         };
     }
 
-    private bool GtaV => _target?.IsGtaV ?? true;
+    /// <summary>The game of the page (known before its folder is): which files the panel talks about. Null = GTA V.</summary>
+    public Modexa.Core.Games.GameId? Game { get; set; }
+
+    private bool GtaV => _target?.IsGtaV ?? Game is null or Modexa.Core.Games.GameId.GtaV or Modexa.Core.Games.GameId.GtaVEnhanced;
+    private bool Cyberpunk => _target?.IsCyberpunk ?? Game == Modexa.Core.Games.GameId.Cyberpunk2077;
 
     /// <summary>The game folder the panel installs into (null = not detected yet).</summary>
     public void SetTarget(GameTarget? target)
@@ -70,8 +74,8 @@ public partial class ModInstallPanel : UserControl, IModListHost
     {
         bool pro = ThemeService.CurrentTier == LicenseTier.Pro;
         SectionDesc.Text = Loc.Instance[GtaV ? "Mods_Section_Desc_GtaV" : "Mods_Section_Desc_Other"];
-        DropHint.Text = Loc.Instance[GtaV ? (pro ? "Mods_Drop_Hint_GtaV_Pro" : "Mods_Drop_Hint_GtaV") : "Mods_Drop_Hint_Other"];
-        BtnChooseFolder.Visibility = GtaV ? Visibility.Visible : Visibility.Collapsed;
+        DropHint.Text = Loc.Instance[Cyberpunk ? "Mods_Drop_Hint_Cp" : GtaV ? (pro ? "Mods_Drop_Hint_GtaV_Pro" : "Mods_Drop_Hint_GtaV") : "Mods_Drop_Hint_Other"];
+        BtnChooseFolder.Visibility = GtaV || Cyberpunk ? Visibility.Visible : Visibility.Collapsed;
         Refresh(); // rows are built in code: rebuild them in the new language / direction
     }
 
@@ -82,7 +86,12 @@ public partial class ModInstallPanel : UserControl, IModListHost
         var target = _target;
         var (mods, unused) = target == null
             ? (new List<ModItem>(), new List<UnusedArchive>())
-            : await Task.Run(() => (ModItem.ForFolder(target.Folder), SafeUnused(target.Folder)));
+            : await Task.Run(() =>
+            {
+                var found = ModItem.ForFolder(target.Folder);
+                ModItem.CheckHealth(found); // which mods lost their files (read in the background)
+                return (found, SafeUnused(target.Folder));
+            });
         if (!ReferenceEquals(target, _target)) return; // the folder changed meanwhile
 
         // Newest first; disabled mods stay listed (with Enable) so they are easy to turn back on.
@@ -188,7 +197,9 @@ public partial class ModInstallPanel : UserControl, IModListHost
     {
         bool pro = ThemeService.CurrentTier == LicenseTier.Pro;
         string loose = string.Join(";", ModInstallService.LooseExtensions.Select(x => "*" + x));
-        string filter = !GtaV
+        string filter = Cyberpunk
+            ? $"{Loc.Instance["Mods_Filter_All"]}|*.mxa;*.zip;*.rar;*.7z|Modexa (*.mxa)|*.mxa|{Loc.Instance["Mods_Filter_Archives"]} (*.zip;*.rar;*.7z)|*.zip;*.rar;*.7z"
+            : !GtaV
             ? $"{Loc.Instance["Mods_Filter_Mxa"]} (*.mxa)|*.mxa"
             : pro
                 ? $"{Loc.Instance["Mods_Filter_All"]}|*.oiv;*.oivs;*.mxa;*.zip;*.rar;*.7z;*.rpf;{loose}|OpenIV (*.oiv;*.oivs)|*.oiv;*.oivs|Modexa (*.mxa)|*.mxa|{Loc.Instance["Mods_Filter_GameFiles"]}|{loose}"
@@ -218,10 +229,10 @@ public partial class ModInstallPanel : UserControl, IModListHost
             DialogWindow.Show(Loc.Instance["Dl_NoGameFolder"], DialogKind.Warning);
             return;
         }
-        var files = paths.Where(p => ModInstallService.IsInstallable(p, GtaV)).ToList();
+        var files = paths.Where(p => ModInstallService.IsInstallable(p, _target)).ToList();
         if (files.Count == 0)
         {
-            DialogWindow.Show(Loc.Instance[GtaV ? "Mods_Unsupported" : "Mods_UnsupportedHere"], DialogKind.Warning);
+            DialogWindow.Show(Loc.Instance[Cyberpunk ? "Mods_Unsupported_Cp" : GtaV ? "Mods_Unsupported" : "Mods_UnsupportedHere"], DialogKind.Warning);
             return;
         }
 
@@ -259,7 +270,7 @@ public partial class ModInstallPanel : UserControl, IModListHost
         if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return new List<string>();
         var files = (string[])e.Data.GetData(DataFormats.FileDrop);
         // Extension check (plus a cheap "is it a folder" for GTA V: a folder of mods is read like an archive).
-        return files.Where(f => ModInstallService.IsInstallable(f, GtaV)).ToList();
+        return files.Where(f => ModInstallService.IsInstallable(f, _target)).ToList();
     }
 
     private void Root_DragOver(object sender, DragEventArgs e)

@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Modexa.Core.Format;
@@ -17,6 +17,10 @@ public sealed class DisabledMod
     public MxaModType ModType { get; set; }
     /// <summary>Short type label of the installed mod (OIV / Modexa / Add-on / Files).</summary>
     public string Kind { get; set; } = "";
+    /// <summary>Every kind it is filed under (main one first); empty in entries made before kinds were a list.</summary>
+    public List<string> Kinds { get; set; } = new();
+    /// <summary>The user's note on the mod (kept while it is off).</summary>
+    public string? Note { get; set; }
     public string Game { get; set; } = "GtaV";
     public string? GameTitle { get; set; }
     public string GameFolder { get; set; } = "";

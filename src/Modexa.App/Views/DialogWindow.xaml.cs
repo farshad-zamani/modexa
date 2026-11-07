@@ -109,11 +109,11 @@ public partial class DialogWindow : Window
     /// the list is locked; on, any item can be picked.
     /// </param>
     public static string? ChooseFromList(string title, string message, IReadOnlyList<(string Value, string Label)> items, string? selected,
-        string? advancedLabel = null)
+        string? advancedLabel = null, string? primaryText = null)
     {
         var dlg = new DialogWindow(message, DialogKind.Question, title, confirm: true, danger: false);
         dlg.IconGlyph.Text = "";
-        dlg.BtnPrimary.Content = Loc.Instance["Common_Install"];
+        dlg.BtnPrimary.Content = primaryText ?? Loc.Instance["Common_Install"];
         dlg.BtnSecondary.Content = Loc.Instance["Common_Cancel"];
         foreach (var (value, label) in items)
             dlg.ChoiceBox.Items.Add(new System.Windows.Controls.ComboBoxItem { Content = label, Tag = value });

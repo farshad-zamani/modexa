@@ -19,6 +19,9 @@ public sealed class AppSettings
     /// <summary>Remembered folders for the single-step games, keyed by <see cref="Games.GameId"/> name.</summary>
     public Dictionary<string, string> GameFolders { get; set; } = new();
 
+    /// <summary>Cyberpunk 2077: the patch the user said a game build is (exe file version → patch), asked once per build.</summary>
+    public Dictionary<string, string> CyberpunkPatches { get; set; } = new();
+
     public string? GetGtaVFolder(Games.GameEdition edition)
         => edition == Games.GameEdition.Enhanced ? GtaVEnhancedFolder : GtaVFolder;
 

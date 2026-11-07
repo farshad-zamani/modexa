@@ -100,6 +100,12 @@ public sealed class BundleEntry
     /// install a non-matching version (used for CP2077 / GTA IV / RDR2 where the runner is per-build).
     /// </summary>
     [JsonPropertyName("requireVersionMatch")] public bool RequireVersionMatch { get; set; }
+
+    /// <summary>
+    /// With a version folder (the <c>*</c>) compare patches exactly ("2.3" is not "2.31"), and never pick one when the game's
+    /// version is not known (Cyberpunk 2077: its mods and tools are made for one patch each).
+    /// </summary>
+    [JsonPropertyName("exactVersion")] public bool ExactVersion { get; set; }
 }
 
 /// <summary>A step with one or more version-specific bundle candidates.</summary>
@@ -121,7 +127,7 @@ public sealed class StepEntry
 public sealed class PrepareManifest
 {
     /// <summary>Manifests older than this layout are ignored in favour of the built-in default.</summary>
-    public const int CurrentVersion = 4;
+    public const int CurrentVersion = 5;
 
     [JsonPropertyName("version")] public int Version { get; set; } = CurrentVersion;
     [JsonPropertyName("steps")] public List<StepEntry> Steps { get; set; } = new();
@@ -148,11 +154,11 @@ public sealed class PrepareManifest
     private const string Rdr2RunnerUrl = "https://dl.wtmod.com/mods/RDR2/Mod-Runner-RDR2-WTMod.com.rar";
     private const string Cp2077RunnerUrl = "https://dl.wtmod.com/mods/CP2077/Cyberpunk-2077-Mod-Runner-Pack-WTMod.com.rar";
 
-    private static StepEntry SimpleRunner(GameId game, string url, string from, bool requireVersion = false) => new()
+    private static StepEntry SimpleRunner(GameId game, string url, string from, bool requireVersion = false, bool exactVersion = false) => new()
     {
         Step = PrepareStep.ModRunner,
         Game = game,
-        Bundles = { new BundleEntry { Url = url, Password = WtModPassword, RequireVersionMatch = requireVersion, Maps = { new BundleMap { From = from, To = "" } } } }
+        Bundles = { new BundleEntry { Url = url, Password = WtModPassword, RequireVersionMatch = requireVersion, ExactVersion = exactVersion, Maps = { new BundleMap { From = from, To = "" } } } }
     };
 
     public static PrepareManifest Default() => new()
@@ -257,7 +263,7 @@ public sealed class PrepareManifest
             SimpleRunner(GameId.RedDeadRedemption1, Rdr1RunnerUrl, "Mod Runner RDR1 */"),
             SimpleRunner(GameId.GtaIV, IvRunnerUrl, "Mod Runner Gta IV */", requireVersion: true),
             SimpleRunner(GameId.RedDeadRedemption2, Rdr2RunnerUrl, "Mod Runner RDR2/*/", requireVersion: true),
-            SimpleRunner(GameId.Cyberpunk2077, Cp2077RunnerUrl, "Mod Runner Pack Cyberpunk 2077 Core Mods/*/", requireVersion: true),
+            SimpleRunner(GameId.Cyberpunk2077, Cp2077RunnerUrl, "Mod Runner Pack Cyberpunk 2077 Core Mods/*/", requireVersion: true, exactVersion: true),
         }
     };
 

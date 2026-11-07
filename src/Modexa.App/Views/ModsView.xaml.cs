@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -58,10 +58,19 @@ public partial class ModsView : UserControl, IInstallHost
 
     private void Back_Click(object sender, RoutedEventArgs e) => _nav.GoHome();
 
-    private void Refresh()
+    private int _refreshing;
+
+    private async void Refresh()
     {
+        int token = ++_refreshing;
+        var mods = await Task.Run(() =>
+        {
+            var all = ModItem.All();
+            ModItem.CheckHealth(all); // which mods lost their files (read in the background)
+            return all;
+        });
+        if (token != _refreshing) return; // a newer refresh is on its way
         Groups.Children.Clear();
-        var mods = ModItem.All();
         SummaryText.Text = Loc.Instance.Format("Mods_Summary", mods.Count(m => m.Record != null),
             mods.Select(m => m.GameFolder).Distinct(StringComparer.OrdinalIgnoreCase).Count());
         EmptyNote.Visibility = mods.Count == 0 ? Visibility.Visible : Visibility.Collapsed;

@@ -11,6 +11,7 @@ using Modexa.Core.Games;
 using Modexa.Core.I18n;
 using Modexa.Core.Install;
 using Modexa.Core.Licensing;
+using Modexa.Core.Prepare;
 using Modexa.Core.Rpf;
 
 namespace Modexa.App.Services;
@@ -34,6 +35,7 @@ public readonly record struct InstallPhase(string Key, int? Percent = null, stri
 public sealed record GameTarget(GameId Id, string Folder, string Title, GameEdition Edition)
 {
     public bool IsGtaV => Id is GameId.GtaV or GameId.GtaVEnhanced;
+    public bool IsCyberpunk => Id == GameId.Cyberpunk2077;
 
     /// <summary>The game key written into .mxa headers by the packer.</summary>
     public string MxaKey => Id switch
@@ -75,10 +77,15 @@ public static class ModInstallService
         ".meta", ".xml", ".dat", ".asi", ".dll", ".ini"
     };
 
-    public static bool IsInstallable(string path, bool gtaV)
-        => path.EndsWith(MxaFile.Extension, StringComparison.OrdinalIgnoreCase)
-           || (gtaV && (OivExtensions.Concat(RawExtensions).Concat(LooseExtensions).Any(x => path.EndsWith(x, StringComparison.OrdinalIgnoreCase))
-                        || Directory.Exists(path)));
+    /// <summary>What a game's page accepts: Modexa packages everywhere; on GTA V also OpenIV packages and (Pro) any mod; on Cyberpunk 2077 archives and folders.</summary>
+    public static bool IsInstallable(string path, GameTarget? target)
+    {
+        if (path.EndsWith(MxaFile.Extension, StringComparison.OrdinalIgnoreCase)) return true;
+        if (target?.IsCyberpunk == true) return CyberpunkMods.IsArchive(path) || Directory.Exists(path);
+        return (target?.IsGtaV ?? true)
+               && (OivExtensions.Concat(RawExtensions).Concat(LooseExtensions).Any(x => path.EndsWith(x, StringComparison.OrdinalIgnoreCase))
+                   || Directory.Exists(path));
+    }
 
     private static bool IsLoose(string path)
         => File.Exists(path) && LooseExtensions.Any(x => path.EndsWith(x, StringComparison.OrdinalIgnoreCase));
@@ -104,7 +111,7 @@ public static class ModInstallService
         if (oivs.Count > 0) results.AddRange(await InstallOivAsync(oivs, target, phase, confirm));
         if (loose.Count > 0) results.Add(await InstallLooseAsync(loose, target, owner, phase));
         foreach (var p in ordered.Except(oivs).Except(loose))
-            results.Add(await InstallAsync(p, target, owner, phase));
+            results.Add(await InstallAsync(p, target, owner, phase, confirm));
         return results;
     }
 
@@ -126,13 +133,15 @@ public static class ModInstallService
     }
 
     /// <summary>Routes a file to the right installer for <paramref name="target"/>.</summary>
-    public static Task<ModResult> InstallAsync(string path, GameTarget target, Window owner, IProgress<InstallPhase>? phase)
-        => FolderChanges.RunAsync(target.Folder, () => InstallOneAsync(path, target, owner, phase));
+    public static Task<ModResult> InstallAsync(string path, GameTarget target, Window owner, IProgress<InstallPhase>? phase, bool confirm = true)
+        => FolderChanges.RunAsync(target.Folder, () => InstallOneAsync(path, target, owner, phase, confirm));
 
-    private static async Task<ModResult> InstallOneAsync(string path, GameTarget target, Window owner, IProgress<InstallPhase>? phase)
+    private static async Task<ModResult> InstallOneAsync(string path, GameTarget target, Window owner, IProgress<InstallPhase>? phase, bool confirm)
     {
         if (path.EndsWith(MxaFile.Extension, StringComparison.OrdinalIgnoreCase))
-            return await InstallPackageAsync(path, target, owner, phase);
+            return await InstallPackageAsync(path, target, owner, phase, confirm);
+        if (target.IsCyberpunk)
+            return await InstallCyberpunkAsync(path, target, owner, phase, confirm);
         if (!target.IsGtaV)
             return Fail("Mods_UnsupportedHere");
         if (OivInstaller.IsPackageFile(path))
@@ -145,7 +154,9 @@ public static class ModInstallService
     public static async Task<List<ModResult>> InstallOivAsync(IReadOnlyList<string> paths, GameTarget target, IProgress<InstallPhase>? phase,
         bool confirm = true)
     {
-        if (await Task.Run(() => GameProcess.IsRunning(target.Folder))) return new() { Fail("Mods_GameRunning") };
+        if (!await GameProcess.EnsureClosedAsync(target.Folder)) return new() { new ModResult(false, "", Cancelled: true) };
+        // OpenIV packages install into the mods folder, which the game reads only once it is prepared for mods.
+        if (!await Task.Run(() => PrepareService.IsReadyForMods(target.Folder))) return new() { Fail("Mods_NeedsPrepared") };
 
         // 1) What each package says about itself (only assembly.xml is read: instant even for GBs).
         phase?.Report("Oiv_Reading");
@@ -279,7 +290,7 @@ public static class ModInstallService
 
     // ---- licensed .mxa ---------------------------------------------------------------------------
 
-    public static async Task<ModResult> InstallPackageAsync(string mxaPath, GameTarget target, Window owner, IProgress<InstallPhase>? phase)
+    public static async Task<ModResult> InstallPackageAsync(string mxaPath, GameTarget target, Window owner, IProgress<InstallPhase>? phase, bool confirm = true)
     {
         if (!await Task.Run(() => MxaFile.IsMxaFile(mxaPath)))
             return Fail("Mxa_NotPackage");
@@ -293,12 +304,17 @@ public static class ModInstallService
             return new ModResult(false, Loc.Instance.Format("Mxa_WrongGame", info.Game, target.Title));
         if (target.IsGtaV && Enum.TryParse<GameEdition>(info.Edition, true, out var ed) && ed != GameEdition.Unknown && ed != target.Edition)
             return new ModResult(false, Loc.Instance.Format("Mxa_WrongEdition", ed == GameEdition.Enhanced ? "GTA V Enhanced" : "GTA V Legacy"));
-        if (await Task.Run(() => GameProcess.IsRunning(target.Folder))) return Fail("Mods_GameRunning");
+        // Add-ons and OpenIV packages go into the mods folder; purchased mods need the mod loader — all need a prepared game.
+        if (target.IsGtaV && (info.ModType is MxaModType.Oiv or MxaModType.Addon || info.Licensed)
+            && !await Task.Run(() => PrepareService.IsReadyForMods(target.Folder)))
+            return Fail("Mods_NeedsPrepared");
+        // What is about to be installed is shown first: a file opened from Explorer is never installed unseen.
+        if (confirm && !DialogWindow.Prompt(PackageDescription(info, target), Loc.Instance["Common_Install"], Loc.Instance["Common_Cancel"], DialogKind.Question))
+            return new ModResult(false, "", Cancelled: true);
+        if (!await GameProcess.EnsureClosedAsync(target.Folder)) return new ModResult(false, "", Cancelled: true);
 
         // A free Modexa mod: no license, no engine — every edition installs it.
         if (!info.Licensed) return await InstallFreePackageAsync(mxaPath, info, target, phase);
-        // A purchased GTA V mod runs through Modexa.asi, which the Mod Runner's ASI loader loads.
-        if (target.IsGtaV && !await Task.Run(() => HasAsiLoader(target.Folder))) return Fail("Lic_NeedsModRunner");
 
         // 1) A license for this product. Each paid mod is its own product with its own key.
         var license = LicenseStore.ForProduct(info.ProductId);
@@ -376,6 +392,16 @@ public static class ModInstallService
         }
     }
 
+    /// <summary>What a Modexa package is, for the question before it is installed: name, author, type, free or purchased.</summary>
+    private static string PackageDescription(MxaInfo info, GameTarget target)
+    {
+        var lines = new List<string> { Loc.Instance.Format("Mxa_Confirm", info.Name, target.Title) };
+        if (!string.IsNullOrWhiteSpace(info.Author)) lines.Add(Loc.Instance.Format("Oiv_Author", info.Author));
+        lines.Add(Loc.Instance[info.ModType switch { MxaModType.Addon => "Mxa_Type_Addon", MxaModType.Oiv => "Mxa_Type_Oiv", _ => "Mxa_Type_Loose" }]);
+        lines.Add(Loc.Instance[info.Licensed ? "Mxa_Kind_Paid" : "Mxa_Kind_Free"]);
+        return string.Join("\n", lines);
+    }
+
     /// <summary>Installs a free (unlicensed) .mxa: the public package reader, in every edition.</summary>
     private static async Task<ModResult> InstallFreePackageAsync(string mxaPath, MxaInfo info, GameTarget target, IProgress<InstallPhase>? phase)
     {
@@ -430,7 +456,142 @@ public static class ModInstallService
         return un.Success ? null : new ModResult(false, UninstallMessage(un));
     }
 
-    // ---- Pro: any other mod ----------------------------------------------------------------------
+    // ---- Cyberpunk 2077 (free, every edition) ----------------------------------------------------
+
+    /// <summary>
+    /// Asks which patch the user's Cyberpunk 2077 is (when Modexa can't tell from the game's files) and remembers the answer for
+    /// that build. Null = cancelled.
+    /// </summary>
+    public static string? AskCyberpunkPatch(string gameFolder, IReadOnlyList<string> patches)
+    {
+        string? raw = CyberpunkPatch.RawVersion(gameFolder);
+        string? chosen = DialogWindow.ChooseFromList(Loc.Instance["Cp_PickPatch_Title"], Loc.Instance.Format("Cp_PickPatch", raw ?? "?"),
+            patches.Select(p => (p, "v" + p)).ToList(), selected: null, primaryText: Loc.Instance["Common_OK"]);
+        if (chosen != null && raw != null) CyberpunkPatch.Remember?.Invoke(raw, chosen);
+        return chosen;
+    }
+
+    /// <summary>
+    /// A mod for Cyberpunk 2077 given as an archive or a folder: Modexa reads what is inside, takes the version made for the
+    /// game's patch, shows what goes where, and copies it into the game folder. Anything it can't be sure about is never installed.
+    /// </summary>
+    private static async Task<ModResult> InstallCyberpunkAsync(string path, GameTarget target, Window owner, IProgress<InstallPhase>? phase, bool confirm)
+    {
+        if (!await GameProcess.EnsureClosedAsync(target.Folder)) return new ModResult(false, "", Cancelled: true);
+        string source = Path.GetFileName(path.TrimEnd('\\', '/'));
+        string title = Directory.Exists(path) ? source : Path.GetFileNameWithoutExtension(source);
+        string work = NewWorkDir("cp");
+        try
+        {
+            phase?.Report(new InstallPhase("Raw_Scanning", null, source, null, title));
+            var unpacked = new Progress<int>(p => phase?.Report(new InstallPhase("Mods_Unpacking", p, source, null, title)));
+            var dispatcher = Application.Current.Dispatcher;
+            string? AskPassword(string archive) => dispatcher.Invoke(() =>
+            {
+                phase?.Report(new InstallPhase(InstallPhase.Hide));
+                return DialogWindow.AskText(Loc.Instance["Raw_Password_Title"], Loc.Instance.Format("Raw_Password", archive),
+                    secret: true, primaryText: Loc.Instance["Common_OK"]);
+            });
+
+            string? patch = await Task.Run(() => CyberpunkPatch.Detect(target.Folder));
+
+            // One thing given = one plan; the version of a mod made per patch is the game's, asked once when it isn't known.
+            async Task<CpModPlan> PlanOne(string input, string name, string inputTitle)
+            {
+                string dir = await Task.Run(() => CyberpunkMods.Unpack(input, work, unpacked, AskPassword));
+                var plan = await Task.Run(() => CyberpunkMods.Plan(dir, inputTitle, patch));
+                if (plan.Kind == CpPlanKind.NeedsPatch)
+                {
+                    phase?.Report(new InstallPhase(InstallPhase.Hide));
+                    patch = AskCyberpunkPatch(target.Folder, plan.Versions);
+                    if (patch != null) plan = await Task.Run(() => CyberpunkMods.Plan(dir, inputTitle, patch));
+                }
+                foreach (var item in plan.Items) { item.SourceName = name; item.SourcePath = FullPath(input) ?? input; }
+                return plan;
+            }
+
+            var plans = new List<CpModPlan>();
+            try
+            {
+                var main = await PlanOne(path, source, title);
+                if (main.Kind == CpPlanKind.NoMods && Directory.Exists(path))
+                {
+                    // A folder of downloads, not unpacked yet: each archive in it is read.
+                    foreach (var a in Directory.GetFiles(path).Where(CyberpunkMods.IsArchive).OrderBy(Path.GetFileName, NaturalComparer.Instance))
+                        plans.Add(await PlanOne(a, Path.GetFileName(a), Path.GetFileNameWithoutExtension(a)));
+                }
+                else plans.Add(main);
+            }
+            catch (ModInstallException ex)
+            {
+                Log.Error("Read Cyberpunk mod", ex);
+                return new ModResult(false, ex.Message);
+            }
+
+            var items = plans.SelectMany(p => p.Items).ToList();
+            if (items.Count == 0)
+            {
+                phase?.Report(new InstallPhase(InstallPhase.Hide));
+                if (plans.FirstOrDefault(p => p.Kind == CpPlanKind.WrongVersion) is { } wrong)
+                    return new ModResult(false, Loc.Instance.Format("Cp_Mod_WrongVersion", title,
+                        string.Join(Loc.Instance.IsRtl ? "، " : ", ", wrong.Versions), patch ?? "?"));
+                if (plans.Any(p => p.Kind == CpPlanKind.NeedsPatch)) return new ModResult(false, "", Cancelled: true);
+                return new ModResult(false, Loc.Instance[Directory.Exists(path) ? "Raw_NoModsFolder" : "Raw_NoModsFile"]);
+            }
+
+            // The user sees what was found and what goes where.
+            phase?.Report(new InstallPhase(InstallPhase.Hide));
+            if (confirm || items.Count > 1)
+            {
+                string gameFolder = Loc.Instance["Raw_GameFolder"];
+                var checks = items.Select(i => new DialogWindow.CheckItem(i.Title, null, Badge: i.Version != null ? "v" + i.Version : null,
+                    Location: ShortFolder(i.Location?.Replace('/', '\\')),
+                    Targets: i.Folders.Select(f => (f + "\\", gameFolder + "\\" + f + "\\")).ToList())).ToList();
+                var choice = DialogWindow.ChooseList(Loc.Instance["Raw_Found_Title"],
+                    Loc.Instance.Format(items.Count == 1 ? "Raw_Found_One" : "Raw_Found", source, target.Title), checks, Loc.Instance["Common_Install"]);
+                if (choice == null || choice.Picked.Count == 0) return new ModResult(false, "", Cancelled: true);
+                items = choice.Picked.Select(i => items[i]).ToList();
+            }
+
+            var results = new List<ModResult>();
+            for (int i = 0; i < items.Count; i++)
+            {
+                var item = items[i];
+                string? step = items.Count > 1 ? Loc.Instance.Format("Busy_Package", i + 1, items.Count) : null;
+                if (!await ReplaceSameAsync(item.Title, item.SourcePath, target, phase, step)) { results.Add(new ModResult(false, "", Cancelled: true)); continue; }
+                var progress = new Progress<OivProgress>(p => phase?.Report(new InstallPhase("Dl_Installing", Percent(p.Done, p.Total),
+                    Detail(p.Current, p.Done, p.Total), step, item.Title)));
+                phase?.Report(new InstallPhase("Dl_Installing", 0, null, step, item.Title));
+                try
+                {
+                    var record = await Task.Run(() =>
+                    {
+                        var rec = CyberpunkMods.Install(item, target.Folder, progress);
+                        Stamp(rec, target, item.SourcePath, item.Title);
+                        rec.Name = item.Title;
+                        InstalledModsStore.Add(rec);
+                        return rec;
+                    });
+                    results.Add(Success(record));
+                }
+                catch (ModInstallException ex)
+                {
+                    Log.Error("Cyberpunk install", ex);
+                    results.Add(new ModResult(false, $"{item.Title}: {InstallMessage(ex)}"));
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("Cyberpunk install", ex);
+                    results.Add(new ModResult(false, $"{item.Title}: {Loc.Instance["Dl_Failed"]}\n{ex.Message}"));
+                }
+            }
+            return Summarize(results);
+        }
+        finally
+        {
+            CleanupLater(work);
+        }
+    }
 
     /// <summary>
     /// Pro-only: installs any other mod (an archive, a folder or an add-on). The Pro engine reads what
@@ -438,7 +599,7 @@ public static class ModInstallService
     /// </summary>
     public static async Task<ModResult> InstallRawAsync(string path, GameTarget target, Window owner, IProgress<InstallPhase>? phase)
     {
-        if (await Task.Run(() => GameProcess.IsRunning(target.Folder))) return Fail("Mods_GameRunning");
+        if (!await GameProcess.EnsureClosedAsync(target.Folder)) return new ModResult(false, "", Cancelled: true);
         var pro = await GetProEngineAsync(owner, phase);
         if (pro == null) return Fail("Pro_Required");
         string source = Path.GetFileName(path.TrimEnd('\\', '/'));
@@ -492,8 +653,13 @@ public static class ModInstallService
             var oivs = chosen.Where(c => c.Item.Kind == ModPlanKind.Package).Select(c => c.Item.Path!).ToList();
             if (oivs.Count > 0) results.AddRange(await InstallOivAsync(oivs, target, phase, confirm: false));
             foreach (var c in chosen.Where(c => c.Item.Kind == ModPlanKind.Licensed))
-                results.Add(await InstallPackageAsync(c.Item.Path!, target, owner, phase));
+                results.Add(await InstallPackageAsync(c.Item.Path!, target, owner, phase, confirm: false));
             var mods = chosen.Where(c => c.Item.Kind is ModPlanKind.Mod or ModPlanKind.Manual).ToList();
+            if (mods.Any(m => m.Item.NeedsModsArchive && m.Place == null) && !await Task.Run(() => PrepareService.IsReadyForMods(target.Folder)))
+            {
+                results.Add(Fail("Mods_NeedsPrepared"));
+                mods.RemoveAll(m => m.Item.NeedsModsArchive && m.Place == null);
+            }
             if (mods.Any(m => m.Item.NeedsModsArchive && m.Place == null))
             {
                 // Add-ons are registered in mods\update\update.rpf: make that copy first, with progress.
@@ -536,6 +702,10 @@ public static class ModInstallService
         while (true)
         {
             if (string.IsNullOrWhiteSpace(place)) return new ModResult(false, "", Cancelled: true);
+            // A place inside the mods folder or an archive only works once the game is prepared for mods.
+            if ((place.Contains(".rpf", StringComparison.OrdinalIgnoreCase) || place.TrimStart('\\', '/').StartsWith("mods", StringComparison.OrdinalIgnoreCase))
+                && !await Task.Run(() => PrepareService.IsReadyForMods(target.Folder)))
+                return Fail("Mods_NeedsPrepared");
             phase?.Report(new InstallPhase("Dl_Installing", null, place.Trim(), step, item.Title));
             try
             {
@@ -683,7 +853,7 @@ public static class ModInstallService
     public static async Task<ModResult> UninstallAsync(IReadOnlyList<ModInstallRecord> records, IProgress<InstallPhase>? phase = null)
     {
         if (records.Count == 0) return new ModResult(false, "", Cancelled: true);
-        if (await Task.Run(() => GameProcess.IsRunning(records[0].GameFolder))) return Fail("Mods_GameRunning");
+        if (!await GameProcess.EnsureClosedAsync(records[0].GameFolder)) return new ModResult(false, "", Cancelled: true);
         var folders = records.Select(r => r.GameFolder).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         await Task.Run(() => folders.ForEach(FolderChanges.Begin));
         try { return await UninstallCoreAsync(records, phase); }
@@ -733,9 +903,7 @@ public static class ModInstallService
 
     public static Task<ModResult> UninstallAsync(ModInstallRecord record) => UninstallAsync(new[] { record });
 
-    /// <summary>The game loads ASI plugins (the Mod Runner's loader is in the game folder).</summary>
-    public static bool HasAsiLoader(string gameFolder)
-        => new[] { "dinput8.dll", "xinput1_4.dll", "dsound.dll", "version.dll" }.Any(f => File.Exists(Path.Combine(gameFolder, f)));
+
 
     /// <summary>Installed records that are parts of the same split mod as <paramref name="record"/> (itself included).</summary>
     public static List<ModInstallRecord> PartsOf(ModInstallRecord record)
@@ -746,7 +914,7 @@ public static class ModInstallService
     /// <summary>Deletes archive copies Modexa made that no installed mod uses any more.</summary>
     public static async Task<ModResult> FreeUnusedAsync(string gameFolder, IReadOnlyList<UnusedArchive> unused, IProgress<InstallPhase>? phase)
     {
-        if (await Task.Run(() => GameProcess.IsRunning(gameFolder))) return Fail("Mods_GameRunning");
+        if (!await GameProcess.EnsureClosedAsync(gameFolder)) return new ModResult(false, "", Cancelled: true);
         var errors = new List<string>();
         long freed = 0;
         foreach (var u in unused)
@@ -945,33 +1113,5 @@ public sealed class NaturalComparer : IComparer<string?>
             }
         }
         return (a.Length - i).CompareTo(b.Length - j);
-    }
-}
-
-/// <summary>Is the game running from this folder? (Files would be locked mid-install.)</summary>
-public static class GameProcess
-{
-    public static bool IsRunning(string gameFolder)
-    {
-        try
-        {
-            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var dir in new[] { gameFolder, Path.Combine(gameFolder, "bin", "x64") })
-                if (Directory.Exists(dir))
-                    foreach (var exe in Directory.EnumerateFiles(dir, "*.exe"))
-                        names.Add(Path.GetFileNameWithoutExtension(exe));
-            // Launchers/updaters can stay open; the game executables can't.
-            names.RemoveWhere(n => n.Contains("Launcher", StringComparison.OrdinalIgnoreCase)
-                                   || n.Contains("Setup", StringComparison.OrdinalIgnoreCase)
-                                   || n.Contains("LanguageSelect", StringComparison.OrdinalIgnoreCase)
-                                   || n.Contains("PlayGTAV", StringComparison.OrdinalIgnoreCase)
-                                   || n.Contains("unins", StringComparison.OrdinalIgnoreCase));
-            return Process.GetProcesses().Any(p =>
-            {
-                try { return names.Contains(p.ProcessName); }
-                finally { p.Dispose(); }
-            });
-        }
-        catch { return false; }
     }
 }

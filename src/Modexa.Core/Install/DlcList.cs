@@ -1,4 +1,5 @@
-using System.IO;
+﻿using System.IO;
+using System.Text.RegularExpressions;
 using System.Xml;
 using Modexa.Core.Rpf;
 
@@ -76,41 +77,79 @@ public static class DlcList
         }
     }
 
+    // dlclist.xml is edited as TEXT, never re-serialised: every other byte of the user's file (spacing,
+    // tabs, line endings, a lowercase <item>, comments, the order of the lines) stays exactly as it was.
+
+    private static readonly Regex ItemEnd = new(@"</Item\s*>", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
     public static string AddEntry(string xml, string dlcName)
     {
-        var (doc, paths) = Parse(xml);
+        var (_, paths) = Parse(xml);
         if (paths == null || FindItem(paths, dlcName) != null) return xml;
+        string nl = xml.Contains("\r\n") ? "\r\n" : "\n";
+        string item = $"<Item>dlcpacks:/{dlcName}/</Item>";
 
-        // Match the file's indentation: copy the whitespace that precedes the last <Item>.
-        var lastItem = paths.ChildNodes.Cast<XmlNode>().LastOrDefault(n => n.NodeType == XmlNodeType.Element);
-        string indent = lastItem?.PreviousSibling is { NodeType: XmlNodeType.Whitespace or XmlNodeType.SignificantWhitespace } ws
-            ? ws.Value ?? "\n\t\t"
-            : "\n\t\t";
-        var item = doc.CreateElement("Item");
-        item.InnerText = $"dlcpacks:/{dlcName}/";
-        if (lastItem != null)
+        int close = xml.IndexOf("</Paths>", StringComparison.Ordinal);
+        if (close < 0)
         {
-            paths.InsertAfter(item, lastItem);
-            paths.InsertBefore(doc.CreateWhitespace(indent), item);
+            // <Paths/> or <Paths></Paths> style: open it up.
+            var empty = Regex.Match(xml, @"<Paths\s*/>");
+            if (!empty.Success) return xml;
+            return xml[..empty.Index] + "<Paths>" + nl + "\t\t" + item + nl + "\t</Paths>" + xml[(empty.Index + empty.Length)..];
         }
-        else
+
+        // After the last <Item> before </Paths>, on a new line with that line's own indentation.
+        Match? last = null;
+        foreach (Match m in ItemEnd.Matches(xml[..close])) last = m;
+        if (last == null)
         {
-            paths.AppendChild(item);
+            int lineStart = LineStart(xml, close);
+            string closeIndent = xml[lineStart..close].All(c => c is ' ' or '\t') ? xml[lineStart..close] : "";
+            return xml[..lineStart] + closeIndent + "\t" + item + nl + xml[lineStart..];
         }
-        return XmlFiles.Save(doc);
+        int end = last.Index + last.Length;
+        string indent = LeadingWhitespace(xml, last.Index);
+        int eol = xml.IndexOf('\n', end);
+        bool restIsBlank = eol >= 0 && eol < close && xml[end..eol].All(c => c is ' ' or '\t' or '\r');
+        if (restIsBlank)
+            return xml[..(eol + 1)] + indent + item + nl + xml[(eol + 1)..];
+        return xml[..end] + nl + indent + item + xml[end..];
     }
 
     public static string RemoveEntry(string xml, string dlcName)
     {
-        var (doc, paths) = Parse(xml);
-        var node = paths == null ? null : FindItem(paths, dlcName);
-        if (node == null) return xml;
-        if (node.PreviousSibling is { NodeType: XmlNodeType.Whitespace or XmlNodeType.SignificantWhitespace } ws)
-            paths!.RemoveChild(ws);
-        paths!.RemoveChild(node);
-        return XmlFiles.Save(doc);
+        var (_, paths) = Parse(xml);
+        if (paths == null || FindItem(paths, dlcName) == null) return xml;
+
+        // The element, wherever it sits; when it is alone on its line, the whole line goes with it.
+        string name = Regex.Escape(dlcName.Trim().Trim('/', '\\'));
+        var element = new Regex($@"<Item\s*>\s*dlcpacks:[/\\]{name}[/\\]?\s*</Item\s*>", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        string result = xml;
+        for (var m = element.Match(result); m.Success; m = element.Match(result))
+        {
+            int ls = LineStart(result, m.Index);
+            int e = m.Index + m.Length;
+            int eol = result.IndexOf('\n', e);
+            string before = result[ls..m.Index];
+            string after = eol < 0 ? result[e..] : result[e..eol];
+            bool alone = before.All(c => c is ' ' or '\t') && after.All(c => c is ' ' or '\t' or '\r');
+            result = alone && eol >= 0 ? result.Remove(ls, eol + 1 - ls) : result.Remove(m.Index, m.Length);
+        }
+        return result;
     }
 
+    private static int LineStart(string s, int index)
+    {
+        int i = s.LastIndexOf('\n', Math.Max(index - 1, 0));
+        return i < 0 || index == 0 ? 0 : i + 1;
+    }
+
+    private static string LeadingWhitespace(string s, int index)
+    {
+        int ls = LineStart(s, index);
+        string lead = s[ls..index];
+        return lead.All(c => c is ' ' or '\t') ? lead : "\t\t";
+    }
     private static (XmlDocument doc, XmlNode? paths) Parse(string xml)
     {
         var doc = new XmlDocument { PreserveWhitespace = true };

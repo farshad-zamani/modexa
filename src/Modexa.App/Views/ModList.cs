@@ -28,8 +28,47 @@ public sealed class ModItem
     public string Name => Record != null ? ModInstallService.DisplayName(Record) : Disabled!.Name;
     public string? Author => Record != null ? Record.Author : Disabled!.Author;
     public string? Source => Record != null ? Record.Source : Disabled!.Source;
-    /// <summary>What kind of mod it is, as the filter chips name it (OIV, Script, ASI, Setup…).</summary>
-    public string Kind => IsSetup ? "Setup" : Record != null ? Record.KindLabel : Disabled!.Kind;
+    /// <summary>
+    /// Every kind the mod is filed under (see <see cref="ModKinds"/>): OIV Setup, Add-on, Script, ASI, Core Mods…
+    /// An OpenIV package that brings an add-on is in both OIV Setup and Add-on.
+    /// </summary>
+    public IReadOnlyList<string> Kinds
+    {
+        get
+        {
+            if (Record != null) return Record.Kinds;
+            if (Disabled!.Setup is { } step) return new[] { ModKinds.OfStep(step) };
+            return Disabled.Kinds.Count > 0 ? Disabled.Kinds.Select(ModKinds.Current).ToList() : new[] { ModKinds.Current(Disabled.Kind) };
+        }
+    }
+
+    public string Kind => Kinds[0];
+
+    /// <summary>A purchased (licensed) mod.</summary>
+    public bool IsPremium => Record != null ? Record.IsPremium : Disabled!.ProductId != null;
+
+    /// <summary>Are its files still in the game? (Checked in the background, see <see cref="CheckHealth"/>.)</summary>
+    public InstallHealth Health { get; set; }
+
+    /// <summary>The user's small note on the mod.</summary>
+    public string? Note => Record != null ? Record.Note : Disabled!.Note;
+
+    public void SetNote(string? note)
+    {
+        note = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
+        if (Record != null) { Record.Note = note; InstalledModsStore.Update(new[] { Record }); }
+        else { Disabled!.Note = note; DisabledModsStore.Add(Disabled); }
+    }
+
+    /// <summary>Checks, off the UI thread, which installed mods have lost their files.</summary>
+    public static void CheckHealth(IReadOnlyList<ModItem> items)
+    {
+        var records = items.Where(i => i.Record != null).Select(i => i.Record!).ToList();
+        if (records.Count == 0) return;
+        var health = InstallChecks.Check(records);
+        foreach (var i in items.Where(i => i.Record != null))
+            if (health.TryGetValue(i.Id, out var h)) i.Health = h;
+    }
 
     /// <summary>Another part of the same split mod (see <see cref="ModParts"/>).</summary>
     public bool IsPartWith(ModItem other)
@@ -119,13 +158,15 @@ public static class ModList
         selection.KeepOnly(items.Select(i => i.Id));
         if (items.Count == 0) return;
 
-        var kinds = items.GroupBy(i => i.Kind).OrderBy(g => KindOrder(g.Key)).Select(g => (g.Key, g.Count())).ToList();
+        // A mod can be in more than one kind (an OIV package with an add-on): it is counted and found in each.
+        var kinds = items.SelectMany(i => i.Kinds.Select(k => (Kind: k, Item: i))).GroupBy(x => x.Kind)
+            .OrderBy(g => ModKinds.Order(g.Key)).Select(g => (g.Key, g.Count())).ToList();
         if (selection.Kind != null && kinds.All(k => k.Key != selection.Kind)) selection.Kind = null;
 
         var results = new StackPanel();
         void Show()
         {
-            var shown = items.Where(i => (selection.Kind == null || i.Kind == selection.Kind) && Matches(i, selection.Query)).ToList();
+            var shown = items.Where(i => (selection.Kind == null || i.Kinds.Contains(selection.Kind)) && Matches(i, selection.Query)).ToList();
             selection.KeepOnly(shown.Select(i => i.Id)); // never act on rows the filter hides
             results.Children.Clear();
             if (shown.Count == 0)
@@ -155,13 +196,8 @@ public static class ModList
         return item.Name.Contains(q, StringComparison.CurrentCultureIgnoreCase)
                || (item.Source != null && System.IO.Path.GetFileName(item.Source).Contains(q, StringComparison.CurrentCultureIgnoreCase))
                || (item.Author?.Contains(q, StringComparison.CurrentCultureIgnoreCase) ?? false)
-               || item.Kind.Contains(q, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static int KindOrder(string kind)
-    {
-        int i = Array.IndexOf(new[] { "OIV", "Add-on", "Modexa", "Script", "ASI", "Plugin", "Manual", "Files", "Setup" }, kind);
-        return i < 0 ? 50 : i;
+               || (item.Note?.Contains(q, StringComparison.CurrentCultureIgnoreCase) ?? false)
+               || item.Kinds.Any(k => k.Contains(q, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>The rows, with the parts of each split mod together (in part order), newest mod first.</summary>
@@ -198,9 +234,9 @@ public static class ModList
                 var chip = new RadioButton { Style = (Style)owner.FindResource("FilterChip"), GroupName = group, IsChecked = selection.Kind == kind, Margin = new Thickness(0, 2, 6, 2) };
                 var content = new StackPanel { Orientation = Orientation.Horizontal };
                 var label = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
-                if (kind == null || kind == "Setup")
+                if (kind == null)
                 {
-                    label.Bind(TextBlock.TextProperty, kind == null ? "Mods_Kind_All" : "Mods_Kind_Setup");
+                    label.Bind(TextBlock.TextProperty, "Mods_Kind_All");
                     label.SetResourceReference(TextBlock.FontFamilyProperty, "Font.Hud");
                 }
                 else label.Text = kind;
@@ -314,6 +350,8 @@ public static class ModRow
         var record = item.Record;
         var disabled = item.Disabled;
         bool off = disabled != null;
+        bool missing = item.Health == InstallHealth.Missing && !off; // its files are gone from the game
+        bool premium = item.IsPremium && !missing;
 
         var card = new Border
         {
@@ -321,6 +359,12 @@ public static class ModRow
             Padding = new Thickness(18, 14, 18, 14),
             Margin = new Thickness(0, 0, 0, 10)
         };
+        // A purchased mod: a thin gold edge and a faint gold wash — not louder than that.
+        if (premium)
+        {
+            card.BorderBrush = PremiumStroke();
+            card.Background = PremiumTint();
+        }
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -335,6 +379,7 @@ public static class ModRow
             Margin = new Thickness(0, 0, 14, 0),
             IsChecked = selection.Contains(item.Id)
         };
+        if (missing) tick.Opacity = 0.45;
         tick.Click += (_, _) => selection.Set(item.Id, tick.IsChecked == true);
         void Sync() => tick.IsChecked = selection.Contains(item.Id);
         tick.Loaded += (_, _) => { selection.Changed -= Sync; selection.Changed += Sync; Sync(); };
@@ -342,8 +387,9 @@ public static class ModRow
         grid.Children.Add(tick);
 
         // The package's own icon when it has one, else a glyph for the kind.
-        string kindLabel = record != null ? record.KindLabel : disabled!.Kind;
-        var tile = new Border { Style = (Style)owner.FindResource("IconTile"), Width = 40, Height = 40, CornerRadius = new CornerRadius(10), Opacity = off ? 0.5 : 1 };
+        string kindLabel = item.Kind;
+        var tile = new Border { Style = (Style)owner.FindResource("IconTile"), Width = 40, Height = 40, CornerRadius = new CornerRadius(10), Opacity = off ? 0.5 : missing ? 0.45 : 1 };
+        if (premium) tile.BorderBrush = new SolidColorBrush(Color.FromArgb(0xAA, 0xFF, 0xD3, 0x6B));
         if (BusyOverlay.LoadImage(record != null ? record.IconFile : disabled!.IconFile, 80) is { } icon)
         {
             tile.Child = new Image { Source = icon, Stretch = Stretch.UniformToFill, FlowDirection = FlowDirection.LeftToRight };
@@ -354,15 +400,16 @@ public static class ModRow
             var glyph = new TextBlock
             {
                 Style = (Style)owner.FindResource("Icon"),
-                Text = kindLabel switch { "OIV" => "", "Modexa" => "", "Add-on" => "", "Setup" => "", _ => "" }
+                Text = kindLabel switch { "OIV Setup" => "", "Modexa" => "", "Add-on" => "", "Core Mods" => "", _ => "" }
             };
-            glyph.SetResourceReference(TextBlock.ForegroundProperty, "Accent");
+            if (premium) glyph.Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0xE0, 0x8A));
+            else glyph.SetResourceReference(TextBlock.ForegroundProperty, "Accent");
             tile.Child = glyph;
         }
         Grid.SetColumn(tile, 1);
         grid.Children.Add(tile);
 
-        var info = new StackPanel { Margin = new Thickness(14, 0, 16, 0), VerticalAlignment = VerticalAlignment.Center };
+        var info = new StackPanel { Margin = new Thickness(14, 0, 16, 0), VerticalAlignment = VerticalAlignment.Center, Opacity = missing ? 0.55 : 1 };
         var title = new StackPanel { Orientation = Orientation.Horizontal };
         var name = new TextBlock
         {
@@ -374,9 +421,23 @@ public static class ModRow
             Opacity = off ? 0.6 : 1
         };
         title.Children.Add(name);
-        bool setup = record?.Setup != null || disabled?.Setup != null;
-        title.Children.Add(Chip(owner, setup ? null : kindLabel, setup ? "Mods_Kind_Setup" : null, "Accent"));
+        bool setup = item.IsSetup;
+        foreach (var k in item.Kinds) title.Children.Add(Chip(owner, k, null, "Accent"));
+        if (premium) title.Children.Add(Chip(owner, null, "Mods_Premium_Chip", "Gold"));
         if (off) title.Children.Add(Chip(owner, null, "Mods_Disabled_Chip", "Warning"));
+        if (missing) title.Children.Add(Chip(owner, null, "Mods_Missing_Chip", "Warning", "Mods_Missing_Tip"));
+        else if (item.Health == InstallHealth.Partial && !off) title.Children.Add(Chip(owner, null, "Mods_Partial_Chip", "Warning", "Mods_Partial_Tip"));
+
+        // A small pencil (faint until the row is hovered) opens the note line.
+        var pencil = new TextBlock
+        {
+            Style = (Style)owner.FindResource("Icon"), FontSize = 11, Text = "\uE70F", Opacity = 0.4, Cursor = System.Windows.Input.Cursors.Hand,
+            Margin = new Thickness(8, 0, 0, 0), Padding = new Thickness(4), Background = Brushes.Transparent, VerticalAlignment = VerticalAlignment.Center
+        };
+        pencil.SetBinding(FrameworkElement.ToolTipProperty, Tr.B("Mods_Note_Add"));
+        card.MouseEnter += (_, _) => pencil.Opacity = 0.85;
+        card.MouseLeave += (_, _) => pencil.Opacity = 0.4;
+        title.Children.Add(pencil);
         info.Children.Add(title);
 
         var parts = new List<string>();
@@ -404,6 +465,7 @@ public static class ModRow
         };
         NumberSubstitution.SetSubstitution(meta, NumberSubstitutionMethod.European);
         info.Children.Add(meta);
+        info.Children.Add(BuildNote(owner, item, pencil));
         Grid.SetColumn(info, 2);
         grid.Children.Add(info);
 
@@ -416,6 +478,16 @@ public static class ModRow
             open.Click += (_, _) => ModInstallService.OpenFolder(item.GameFolder);
             actions.Children.Add(open);
         }
+        if (missing)
+        {
+            // Not in the game any more: the row is dimmed, and one click takes it off the list.
+            var forget = ModList.SmallButton(owner, "GhostButton", "\uE711", "Mods_Forget");
+            forget.SetBinding(FrameworkElement.ToolTipProperty, Tr.B("Mods_Missing_Tip"));
+            forget.Click += (_, _) => host.Run(ModAction.Forget, new[] { item }, single: true);
+            actions.Children.Add(forget);
+        }
+        else
+        {
         if (item.CanDisable)
         {
             var disable = ModList.SmallButton(owner, "GhostButton", "", "Mods_Disable");
@@ -435,6 +507,7 @@ public static class ModRow
         remove.Bind(ContentControl.ContentProperty, "Mods_Uninstall");
         remove.Click += (_, _) => host.Run(ModAction.Remove, new[] { item }, single: true);
         actions.Children.Add(remove);
+        }
         Grid.SetColumn(actions, 3);
         grid.Children.Add(actions);
 
@@ -515,7 +588,7 @@ public static class ModRow
             VerticalAlignment = VerticalAlignment.Center,
             Opacity = allOff ? 0.6 : 1
         });
-        title.Children.Add(Chip(owner, first.Kind, null, "Accent"));
+        foreach (var k in first.Kinds) title.Children.Add(Chip(owner, k, null, "Accent"));
         var count = Chip(owner, null, null, "Text.Secondary");
         ((TextBlock)count.Child).SetResourceReference(TextBlock.FontFamilyProperty, "Font.Hud");
         ((TextBlock)count.Child).Text = Loc.Instance.Format("Mods_Parts", parts.Count);
@@ -613,16 +686,94 @@ public static class ModRow
     }
 
     /// <summary>Small label chip: literal <paramref name="text"/> (Latin) or a localized <paramref name="key"/>.</summary>
-    private static Border Chip(FrameworkElement owner, string? text, string? key, string brush)
+    private static Border Chip(FrameworkElement owner, string? text, string? key, string brush, string? tipKey = null)
     {
         var chip = new Border { Style = (Style)owner.FindResource("TierChip"), Margin = new Thickness(10, 0, 0, 0), MinHeight = 20, Padding = new Thickness(7, 0, 7, 0), VerticalAlignment = VerticalAlignment.Center };
         var t = new TextBlock { FontSize = 11, FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center };
         if (key != null) t.Bind(TextBlock.TextProperty, key);
         else t.Text = text ?? "";
         t.SetResourceReference(TextBlock.FontFamilyProperty, key != null ? "Font.Hud" : "Font.En.Hud");
-        t.SetResourceReference(TextBlock.ForegroundProperty, brush);
-        if (brush != "Accent") chip.SetResourceReference(Border.BorderBrushProperty, brush);
+        if (brush == "Gold")
+        {
+            // A purchased mod's chip: gold, fixed in every theme.
+            t.Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0xE0, 0x8A));
+            chip.BorderBrush = new SolidColorBrush(Color.FromArgb(0x88, 0xFF, 0xD3, 0x6B));
+            chip.Background = new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xD3, 0x6B));
+        }
+        else
+        {
+            t.SetResourceReference(TextBlock.ForegroundProperty, brush);
+            if (brush != "Accent") chip.SetResourceReference(Border.BorderBrushProperty, brush);
+        }
+        if (tipKey != null) chip.SetBinding(FrameworkElement.ToolTipProperty, Tr.B(tipKey));
         chip.Child = t;
         return chip;
+    }
+
+    /// <summary>A thin gold edge for a purchased mod's row.</summary>
+    private static Brush PremiumStroke()
+    {
+        var b = new LinearGradientBrush(Color.FromArgb(0x99, 0xFF, 0xE0, 0x8A), Color.FromArgb(0x44, 0xD9, 0xA2, 0x3C), 0);
+        b.GradientStops.Insert(1, new GradientStop(Color.FromArgb(0x55, 0xFF, 0xD3, 0x6B), 0.5));
+        b.Freeze();
+        return b;
+    }
+
+    /// <summary>A faint gold wash that fades out across the row (from the side the text starts on).</summary>
+    private static Brush PremiumTint()
+    {
+        var b = new LinearGradientBrush(Color.FromArgb(0x18, 0xFF, 0xD3, 0x6B), Color.FromArgb(0x00, 0xFF, 0xD3, 0x6B),
+            new Point(Loc.Instance.IsRtl ? 1 : 0, 0), new Point(Loc.Instance.IsRtl ? 0 : 1, 0));
+        b.Freeze();
+        return b;
+    }
+
+    /// <summary>
+    /// The user's note under the mod's details: shown when there is one, edited in place (Enter or leaving the box saves,
+    /// Esc cancels). The pencil next to the name opens it. Empty = nothing is shown.
+    /// </summary>
+    private static FrameworkElement BuildNote(FrameworkElement owner, ModItem item, FrameworkElement pencil)
+    {
+        var host = new Grid { Margin = new Thickness(0, 4, 0, 0), Visibility = string.IsNullOrWhiteSpace(item.Note) ? Visibility.Collapsed : Visibility.Visible };
+        var text = new TextBlock
+        {
+            Text = item.Note ?? "", Style = (Style)owner.FindResource("Text.Desc"), FontStyle = FontStyles.Italic,
+            TextTrimming = TextTrimming.CharacterEllipsis, TextWrapping = TextWrapping.NoWrap, Cursor = System.Windows.Input.Cursors.IBeam, Opacity = 0.9
+        };
+        var box = new TextBox { Style = (Style)owner.FindResource("Field"), Height = 28, FontSize = 12, MaxLength = 120, Visibility = Visibility.Collapsed };
+        box.SetBinding(FrameworkElement.ToolTipProperty, Tr.B("Mods_Note_Hint"));
+        host.Children.Add(text);
+        host.Children.Add(box);
+
+        void Edit()
+        {
+            box.Text = item.Note ?? "";
+            text.Visibility = Visibility.Collapsed;
+            box.Visibility = Visibility.Visible;
+            host.Visibility = Visibility.Visible;
+            box.Focus();
+            box.SelectAll();
+        }
+        void Done(bool save)
+        {
+            if (box.Visibility != Visibility.Visible) return;
+            box.Visibility = Visibility.Collapsed;
+            if (save)
+            {
+                item.SetNote(box.Text);
+                text.Text = item.Note ?? "";
+            }
+            text.Visibility = Visibility.Visible;
+            host.Visibility = string.IsNullOrWhiteSpace(item.Note) ? Visibility.Collapsed : Visibility.Visible;
+        }
+        text.MouseLeftButtonUp += (_, _) => Edit();
+        pencil.MouseLeftButtonUp += (_, _) => Edit();
+        box.LostKeyboardFocus += (_, _) => Done(true);
+        box.KeyDown += (_, e) =>
+        {
+            if (e.Key == System.Windows.Input.Key.Enter) { Done(true); e.Handled = true; }
+            else if (e.Key == System.Windows.Input.Key.Escape) { Done(false); e.Handled = true; }
+        };
+        return host;
     }
 }

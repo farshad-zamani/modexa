@@ -1,4 +1,4 @@
-<UserControl x:Class="Modexa.App.Views.GtaVView"
+﻿<UserControl x:Class="Modexa.App.Views.GtaVView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:Modexa.App.Views"
@@ -38,6 +38,9 @@
                                    Text="{Binding [GtaV_Subtitle], Source={x:Static i18n:Loc.Instance}}"/>
                     </StackPanel>
                 </Grid>
+
+                <!-- Shown while the game is open: one click closes it. -->
+                <local:GameRunningBar x:Name="RunningBar" Margin="0,16,0,0"/>
 
                 <!-- ===== Game folder ===== -->
                 <Border Style="{StaticResource Card}" Margin="0,24,0,0">

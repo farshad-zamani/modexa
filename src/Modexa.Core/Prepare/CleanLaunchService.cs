@@ -16,12 +16,25 @@ public static class CleanLaunchService
 
     public const string DisabledSuffix = ".modexa-off";
 
-    public static bool IsCleanLaunchEnabled(string gameFolder)
+    /// <summary>What the game folder looks like to a "clean launch" switch.</summary>
+    public enum State
     {
-        // "Clean" means none of the active loader DLLs are present (they're renamed to .off).
-        return LoaderDlls.All(dll => !File.Exists(Path.Combine(gameFolder, dll)));
+        /// <summary>No mod loader in the game folder at all (the game isn't prepared): there is nothing to switch.</summary>
+        NoLoader,
+        /// <summary>A mod loader is in place: mods load.</summary>
+        Modded,
+        /// <summary>The loaders were put aside by Modexa: the game starts vanilla.</summary>
+        Clean
     }
 
+    public static State GetState(string gameFolder)
+    {
+        if (LoaderDlls.Any(dll => File.Exists(Path.Combine(gameFolder, dll)))) return State.Modded;
+        return LoaderDlls.Any(dll => File.Exists(Path.Combine(gameFolder, dll + DisabledSuffix))) ? State.Clean : State.NoLoader;
+    }
+
+    /// <summary>"Clean" means the loaders were put aside — not merely that there are none.</summary>
+    public static bool IsCleanLaunchEnabled(string gameFolder) => GetState(gameFolder) == State.Clean;
     /// <summary>Disable all mods for the next launch (rename loaders to .off).</summary>
     public static void EnableCleanLaunch(string gameFolder)
     {

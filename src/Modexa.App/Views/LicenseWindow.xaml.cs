@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -77,12 +77,12 @@ public partial class LicenseWindow : Window
         string key = LicenseFormat.Normalize(txtKey.Text);
         if (!LicenseManager.IsFormatValid(key))
         {
-            ShowMessage(Loc.Instance["License_InvalidFormat"], "Danger");
+            ShowMessage(Loc.Instance["License_Invalid"], "Danger");
             return;
         }
         if (_purpose == LicensePurpose.Pro && LicenseManager.TierFromKey(key) != LicenseTier.Pro)
         {
-            ShowMessage(Loc.Instance["Pro_NotProKey"], "Danger");
+            ShowMessage(Loc.Instance["License_Invalid"], "Danger");
             return;
         }
         if (_purpose == LicensePurpose.Product)
@@ -90,12 +90,12 @@ public partial class LicenseWindow : Window
             // Mod keys are MDXPLS-…-<product code>; the suffix must match this package's code.
             if (LicenseManager.TierFromKey(key) == LicenseTier.Pro)
             {
-                ShowMessage(Loc.Instance["License_ProKeyForMod"], "Danger");
+                ShowMessage(Loc.Instance["License_Invalid"], "Danger");
                 return;
             }
             if (!LicenseFormat.Covers(key, _productId))
             {
-                ShowMessage(Loc.Instance.Format("License_WrongProduct", LicenseFormat.SuffixOf(key), _productId), "Danger");
+                ShowMessage(Loc.Instance["License_Invalid"], "Danger"); // no explanation of how keys relate to mods
                 return;
             }
         }
@@ -111,8 +111,7 @@ public partial class LicenseWindow : Window
                     "too_many_activations" => Loc.Instance["License_TooMany"],
                     "NETWORK_ERROR" => Loc.Instance["License_Network"],
                     "APP_UPDATE" => Loc.Instance["License_AppUpdate"],
-                    "not_entitled" => Loc.Instance["Gate_NotEntitled"],
-                    _ => result.ErrorMessage ?? Loc.Instance["License_InvalidFormat"]
+                    _ => Loc.Instance["License_Invalid"] // wrong, expired, revoked…: just "not valid"
                 };
                 SetBusy(false);
                 ShowMessage(msg, "Danger");
@@ -175,10 +174,10 @@ public partial class LicenseWindow : Window
     public static string GateMessage(LicenseGateException ex) => ex.Code switch
     {
         LicenseGateException.Network => Loc.Instance["Gate_Network"],
-        LicenseGateException.NotEntitled => Loc.Instance["Gate_NotEntitled"],
+        LicenseGateException.NotEntitled => Loc.Instance["License_Invalid"],
         LicenseGateException.BadModule => Loc.Instance["Gate_BadModule"],
         LicenseGateException.AppUpdate => Loc.Instance["Gate_AppUpdate"],
-        _ => Loc.Instance["Gate_Refused"]
+        _ => Loc.Instance["License_Invalid"]
     };
 
     private void ShowMessage(string text, string brushKey)

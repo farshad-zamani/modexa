@@ -47,6 +47,9 @@ public interface IModEngine
     /// <summary>An installed mod is about to be removed.</summary>
     void Removing(ModInstallRecord record);
 
+    /// <summary>Are the files of a purchased mod still in the game? (The engine knows where it keeps them.)</summary>
+    InstallHealth CheckHealth(ModInstallRecord record);
+
     /// <summary>Checks the licenses of the installed purchased mods with the shop: one notice per product.</summary>
     IReadOnlyList<ProductNotice> CheckLicenses(LicenseCheckRequest request);
 }
@@ -71,7 +74,7 @@ public interface IProModEngine : IModEngine
 
 public static class ModEngineContract
 {
-    public const int ApiVersion = 6;
+    public const int ApiVersion = 7;
 }
 
 /// <summary>One stored license key (a purchased mod's key names its product; null for a Pro key).</summary>

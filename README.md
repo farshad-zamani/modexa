@@ -99,7 +99,15 @@ reverse:
 The **Installed mods** list on each game page shows what is installed there — mods and prepare steps —
 each with its own **Remove mod** button. **My Mods** shows everything installed on every game in one place,
 with the same buttons. Tick several mods (or **Select all**) to disable, enable or remove them together.
-Filter chips (OIV, Script, ASI, Setup…) and a search box find a mod quickly in a long list.
+Filter chips (OIV Setup, Add-on, Script, ASI, Core Mods…) and a search box find a mod quickly in a long list; a small note
+can be added to any mod. A mod whose files are no longer in the game (another tool, a restored backup) is shown dimmed
+and can be taken off the list with one click.
+
+### Cyberpunk 2077 — free
+Install a Cyberpunk 2077 mod straight from its `.zip` / `.rar` / `.7z` or folder: Modexa recognises the game's own
+folders inside it (`archive`, `bin`, `r6`, `red4ext`…), picks the version made for your game's patch when a mod
+comes in several, shows what goes where, and copies it in. The Mod Runner is matched to your patch too — and nothing
+is installed when your patch isn't one Modexa knows. Anything Modexa can't be sure about is never installed.
 
 ### Free Modexa mods
 Modexa packages (`.mxa`) published as free mods install in every edition, no license needed — on every
@@ -115,6 +123,8 @@ If the mod file was moved or deleted in the meantime, Modexa asks for it.
 ### Also
 - Every game has its own look: its artwork on the home card and, faintly, behind its page.
 - **Open folder** next to every game path opens it in File Explorer.
+- When the game is open (even in the background), Modexa says so and can close it with one click.
+- A mod file opened from Explorer is never installed unseen: its name and details are shown first.
 - Drag a mod file onto the window or double-click an `.mxa` in Explorer: Modexa opens the right
   game page and installs it there.
 - English and Persian (Vazirmatn font), dark interface; Plus and Pro add gold themes with animated
@@ -130,6 +140,7 @@ If the mod file was moved or deleted in the meantime, Modexa asks for it.
 | Install OpenIV packages (`.oiv`, `.oivs`) | ✅ | ✅ | ✅ |
 | Remove mods (exact, any order) | ✅ | ✅ | ✅ |
 | Disable / enable mods, bulk actions | ✅ | ✅ | ✅ |
+| Cyberpunk 2077 mods from archives and folders | ✅ | ✅ | ✅ |
 | Licensed Modexa mods (`.mxa`) from [WTMod.com](https://wtmod.com) | — | ✅ | ✅ |
 | Clean launch (safe for GTA Online) and one-click revert | — | ✅ | ✅ |
 | Install any other mod: `.zip` / `.rar` / `.7z` packs, folders, add-ons, script mods | — | — | ✅ |

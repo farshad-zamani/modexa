@@ -96,7 +96,12 @@ public static class ModUninstaller
         //    update.rpf itself is about to be deleted.
         if (!released.Contains(ModsArchives.UpdateRpf))
         {
-            var dlcs = record.AllDlcs.Where(d => !others.Any(r => r.AllDlcs.Contains(d, StringComparer.OrdinalIgnoreCase))).ToList();
+            // Every pack this mod brought (registered by it, or just put in place by it), unless another installed
+            // mod still uses it or its files are still there (kept because something else changed them).
+            var dlcs = record.AllDlcs.Concat(record.PlacedDlcs).Distinct(StringComparer.OrdinalIgnoreCase)
+                .Where(d => !others.Any(r => r.AllDlcs.Contains(d, StringComparer.OrdinalIgnoreCase) || r.PlacedDlcs.Contains(d, StringComparer.OrdinalIgnoreCase)))
+                .Where(d => !File.Exists(Path.Combine(DlcList.DlcPacksDir(folder), d, "dlc.rpf")))
+                .ToList();
             try { DlcList.UnregisterMany(folder, dlcs); }
             catch (Exception ex) { result.Errors.Add($"dlclist.xml: {ex.Message}"); }
         }

@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 using Modexa.Core.Format;
 
@@ -38,6 +38,20 @@ public sealed class ModInstallRecord
     [System.Text.Json.Serialization.JsonIgnore]
     public IEnumerable<string> AllDlcs => DlcNames.Prepend(DlcName ?? "").Where(n => !string.IsNullOrWhiteSpace(n))
         .Distinct(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// dlcpacks folders this mod put in the game — read from what it wrote (a dlc.rpf under "dlcpacks\<name>\"),
+    /// so a pack is taken out of dlclist.xml on removal even when the mod registered it in a way that wasn't recorded.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IEnumerable<string> PlacedDlcs => ArchiveEdits.Where(e => e.WasCreated && e.Nested.Count == 0).Select(e => e.Entry)
+        .Concat(Files.Where(f => f.WasCreated).Select(f => f.Dest))
+        .Select(p => PlacedDlc.Match(p.Replace('\\','/')))
+        .Where(m => m.Success).Select(m => m.Groups[1].Value)
+        .Distinct(StringComparer.OrdinalIgnoreCase);
+
+    private static readonly System.Text.RegularExpressions.Regex PlacedDlc = new(@"(?:^|/)dlcpacks/([^/]+)/dlc\d*\.rpf$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
     public string? ProductId { get; set; }                 // FSLM product of a paid package (null otherwise)
     /// <summary>File name the mod was installed from (.oiv / .mxa / .rpf / .zip).</summary>
     public string? Source { get; set; }
@@ -51,6 +65,8 @@ public sealed class ModInstallRecord
     public string? PackageHash { get; set; }
     /// <summary>The package's icon, saved with the mod's backups (shown in the installed lists).</summary>
     public string? IconFile { get; set; }
+    /// <summary>A small note the user put on the mod (shown under its name).</summary>
+    public string? Note { get; set; }
     /// <summary>A "Prepare for mods" step installed from the game page (Mod Runner, GameConfig, Menu…).</summary>
     public Prepare.PrepareStep? Setup { get; set; }
     public DateTime InstalledUtc { get; set; } = DateTime.UtcNow;
@@ -79,22 +95,56 @@ public sealed class ModInstallRecord
     /// <summary>Prepare step: when its pack was last checked for a newer version.</summary>
     public DateTime? LastUpdateCheckUtc { get; set; }
 
-    /// <summary>Short type label: Setup / Modexa / OIV / Add-on / Script / ASI / Manual / Files.</summary>
+    /// <summary>Main type label (see <see cref="ModKinds"/>).</summary>
     [System.Text.Json.Serialization.JsonIgnore]
-    public string KindLabel => Setup != null ? "Setup"
-        : ProductId != null || Source?.EndsWith(".mxa", StringComparison.OrdinalIgnoreCase) == true ? "Modexa"
+    public string KindLabel => Kinds[0];
+
+    /// <summary>
+    /// Every kind the mod is filed under, main one first. An OpenIV package that brings an add-on (a dlcpacks
+    /// folder, registered in dlclist.xml) is also an "Add-on".
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IReadOnlyList<string> Kinds
+    {
+        get
+        {
+            if (Setup is { } step) return new[] { ModKinds.OfStep(step) };
+            var kinds = new List<string> { MainKind };
+            if (kinds[0] != ModKinds.AddOn && (AllDlcs.Any() || PlacedDlcs.Any())) kinds.Add(ModKinds.AddOn);
+            return kinds;
+        }
+    }
+
+    private string MainKind => ProductId != null || Source?.EndsWith(".mxa", StringComparison.OrdinalIgnoreCase) == true ? ModKinds.Modexa
         : ModType switch
         {
-            MxaModType.Oiv => "OIV",
-            MxaModType.Addon => "Add-on",
+            MxaModType.Oiv => ModKinds.OivSetup,
+            MxaModType.Addon => ModKinds.AddOn,
             // Loose files: named after what they are.
-            _ when ArchiveEdits.Count > 0 => "Manual",
-            _ when Files.Any(f => f.Dest.StartsWith("scripts\\", StringComparison.OrdinalIgnoreCase)) => "Script",
-            _ when Files.Any(f => f.Dest.EndsWith(".asi", StringComparison.OrdinalIgnoreCase)) => "ASI",
-            _ when Files.Any(f => f.Dest.StartsWith("plugins\\", StringComparison.OrdinalIgnoreCase)) => "Plugin",
-            _ => "Files"
+            _ when ArchiveEdits.Count > 0 => ModKinds.Manual,
+            _ when Game == "Cp2077" && LooseKind() is { } cp => cp,
+            _ when Files.Any(f => f.Dest.StartsWith("scripts\\", StringComparison.OrdinalIgnoreCase)) => ModKinds.Script,
+            _ when Files.Any(f => f.Dest.EndsWith(".asi", StringComparison.OrdinalIgnoreCase)) => ModKinds.Asi,
+            _ when Files.Any(f => f.Dest.StartsWith("plugins\\", StringComparison.OrdinalIgnoreCase)) => ModKinds.Plugin,
+            _ => ModKinds.Files
         };
 
+    /// <summary>Cyberpunk 2077 mods are told apart by where their files go.</summary>
+    private string? LooseKind()
+    {
+        bool Under(string prefix) => Files.Any(f => f.Dest.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+        if (Under("bin\\x64\\plugins\\cyber_engine_tweaks")) return ModKinds.Cet;
+        if (Under("red4ext\\plugins")) return ModKinds.Red4ext;
+        if (Under("r6\\scripts")) return ModKinds.Script;
+        if (Under("r6\\tweaks")) return ModKinds.TweakXl;
+        if (Under("archive\\pc\\mod")) return ModKinds.Archive;
+        if (Under("mods\\")) return ModKinds.RedMod;
+        return null;
+    }
+
+    /// <summary>A purchased (licensed) mod.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsPremium => ProductId != null;
     /// <summary>All archives the mod touched (edited or copied).</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public IEnumerable<string> Archives => ArchiveEdits.Select(e => e.Archive).Concat(CreatedArchives)
