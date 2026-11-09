@@ -422,6 +422,8 @@ internal static class LocStrings
         ["GtaV_CleanLaunch_NeedsPrepare"] = "Prepare the game for mods first — there is nothing to switch off yet.",
         ["Cp_PickPatch_Title"] = "Which patch is your game?",
         ["Mods_Filter_Archives"] = "Archives",
+        ["Archive_InvalidSize"] = "The archive contains a file with an invalid size. Extract it again from a complete download.",
+        ["Archive_Truncated"] = "An archive file ended before all its data could be read. Download the complete archive and try again.",
     };
 
     public static readonly Dictionary<string, string> Fa = new(StringComparer.Ordinal)
@@ -825,5 +827,7 @@ internal static class LocStrings
         ["GtaV_CleanLaunch_NeedsPrepare"] = "ابتدا بازی را برای نصب ماد آماده کنید؛ هنوز چیزی برای خاموش‌کردن نیست.",
         ["Cp_PickPatch_Title"] = "پچ بازی شما کدام است؟",
         ["Mods_Filter_Archives"] = "فایل فشرده",
+        ["Archive_InvalidSize"] = "اندازهٔ یکی از فایل‌های آرشیو نامعتبر است. فایل دانلودشدهٔ کامل را دوباره استخراج کنید.",
+        ["Archive_Truncated"] = "اطلاعات یکی از فایل‌های آرشیو ناقص است. آرشیو را به‌طور کامل دانلود و دوباره تلاش کنید.",
     };
 }

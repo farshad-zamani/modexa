@@ -42,6 +42,7 @@ public class CyberpunkPatchTests
 
     [Theory]
     [InlineData("2.5", "v2.5")]
+    [InlineData("2.50", "v2.5")]
     [InlineData("2.31", "v2.31")]
     public void The_runner_folder_of_the_games_patch_is_used(string patch, string folder)
     {

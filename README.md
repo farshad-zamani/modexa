@@ -37,6 +37,9 @@ Modexa detects the game folder, the edition (GTA V **Legacy** or **Enhanced**) a
 version/build, then downloads and installs the matching prerequisites, showing the progress. A pack is
 downloaded once and only again when it changes on the server:
 
+Cyberpunk 2077 preparation copies the matching pack's files into the game folder byte for byte,
+including password-protected RAR downloads. Patch 2.50 matches a pack folder named v2.5.
+
 | Game | What gets installed |
 |---|---|
 | GTA V Legacy / Enhanced | Mod Runner (ASI loader, ScriptHookV, ScriptHookVDotNet, Lua, OpenIV.asi / OpenRPF), GameConfig for add-on mods picked for your exact build (normal traffic by default, busier or quieter streets as an advanced option; + heap and packfile adjusters on Legacy), Menyoo trainer |

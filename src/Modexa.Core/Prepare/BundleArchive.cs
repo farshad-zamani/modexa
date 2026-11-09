@@ -1,5 +1,6 @@
 ﻿using System.IO;
 using SharpCompress.Archives;
+using SharpCompress.Common;
 using SharpCompress.Readers;
 
 namespace Modexa.Core.Prepare;
@@ -60,8 +61,20 @@ public static class BundleArchive
             if (dest != null)
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                using var outFs = File.Create(dest);
-                reader.WriteEntryTo(outFs);
+                // Do not replace a working file until its whole entry has been read successfully.
+                string temp = dest + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    using (var input = reader.OpenEntryStream())
+                    using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write))
+                        CopyEntry(input, output, entry.Size, reader.Type == ArchiveType.Rar && entry.IsEncrypted, ct);
+                    ct.ThrowIfCancellationRequested();
+                    File.Move(temp, dest, overwrite: true);
+                }
+                finally
+                {
+                    if (File.Exists(temp)) File.Delete(temp);
+                }
                 written++;
             }
 
@@ -72,5 +85,37 @@ public static class BundleArchive
             }
         }
         return written;
+    }
+
+    /// <summary>Writes exactly the declared file size, consuming any encrypted RAR block padding.</summary>
+    internal static void CopyEntry(Stream input, Stream output, long size, bool encryptedRar, CancellationToken ct)
+    {
+        if (size < 0) throw new InvalidDataException(I18n.Loc.Instance["Archive_InvalidSize"]);
+        var buffer = new byte[81920];
+        long remaining = size;
+        while (remaining > 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            int read = input.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
+            if (read == 0) throw new EndOfStreamException(I18n.Loc.Instance["Archive_Truncated"]);
+            output.Write(buffer, 0, read);
+            remaining -= read;
+        }
+
+        // SharpCompress can expose AES padding after large stored, encrypted RAR files. It belongs
+        // to the archive, never to the installed file. Still reach EOF for integrity checks and solid
+        // archive state; reject any excess other than the remainder of one 16-byte encrypted block.
+        int padding = 0;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            int read = input.Read(buffer, 0, buffer.Length);
+            if (read == 0) break;
+            if (!encryptedRar || read > 15 - padding)
+                throw new InvalidDataException(I18n.Loc.Instance["Archive_InvalidSize"]);
+            padding += read;
+        }
+        if (padding > 0 && (size % 16 + padding) % 16 != 0)
+            throw new InvalidDataException(I18n.Loc.Instance["Archive_InvalidSize"]);
     }
 }
